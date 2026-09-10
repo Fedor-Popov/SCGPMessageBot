@@ -22,6 +22,7 @@ Current modules:
 - `sources/wednesday.py` reads Wednesday Seminar sheets and supplies the default 2:00 PM / room 313 metadata.
 - `sources/journal_club.py` reads Journal Club sheets and supplies the default 2:00 PM / Common Room metadata.
 - `sources/google_sheets.py` provides the reusable Google Sheets adapter; column positions may differ.
+- `lunch.py` reads the current Lessings Simons Center cafe menu for the `Lunch` button and `/lunch` command.
 - `cache.py` stores the combined normalized events locally as JSON.
 
 ## Configuration

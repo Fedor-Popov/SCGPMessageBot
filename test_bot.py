@@ -1,11 +1,12 @@
 from datetime import date
 from pathlib import Path
 
-from bot import format_talks, week_start
+from bot import format_lunch, format_talks, week_start
 from cache import EventCache
 from events import Event
 from website import parse_schedule
 from sources.google_sheets import parse_rows
+from lunch import LunchItem, LunchMenu
 
 
 def test_parse_schedule():
@@ -59,3 +60,11 @@ def test_sheet_rows_keep_missing_title_and_abstract():
     assert talks[0].title == ""
     assert talks[0].description == ""
     assert "A Speaker" in format_talks(talks, "Talks")
+
+
+def test_format_lunch():
+    menu = LunchMenu(date(2026, 9, 10), (("Soup", (LunchItem("Tomato Soup", "With herbs"),)),))
+    message = format_lunch(menu)
+    assert "Thursday, September 10" in message
+    assert "<b>Soup</b>" in message
+    assert "Tomato Soup — With herbs" in message

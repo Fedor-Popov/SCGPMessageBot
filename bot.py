@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 from cache import EventCache
 from dotenv import load_dotenv
 from events import Event
+from lunch import LessingsLunchSource, LunchMenu
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
@@ -28,6 +29,7 @@ load_dotenv()
 class Settings:
     telegram_token: str
     website_url: str
+    lunch_menu_url: str
     cache_file: Path
     google_spreadsheet_ids: tuple[str, ...]
     wednesday_spreadsheet_ids: tuple[str, ...]
@@ -53,6 +55,7 @@ class Settings:
         return cls(
             telegram_token=os.environ["TELEGRAM_BOT_TOKEN"],
             website_url=os.getenv("SEMINAR_WEBSITE_URL", "https://sites.google.com/view/thermalseminars"),
+            lunch_menu_url=os.getenv("LUNCH_MENU_URL", "https://www.lessings.com/my/lfsm/weekly-menu/simons-center"),
             cache_file=Path(os.getenv("TALKS_CACHE_FILE", "talks-cache.json")),
             google_spreadsheet_ids=spreadsheet_ids,
             wednesday_spreadsheet_ids=wednesday_ids,
@@ -140,10 +143,29 @@ def menu_markup() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton("Next week", callback_data="nextweek"),
+            InlineKeyboardButton("Lunch", callback_data="lunch"),
+        ],
+        [
             InlineKeyboardButton("Help", callback_data="help"),
         ],
         [InlineKeyboardButton("Stop announcements", callback_data="stop")],
     ])
+
+
+def format_lunch(menu: LunchMenu) -> str:
+    lines = [f"🍽 <b>Lunch — {escape(menu.date.strftime('%A, %B %-d'))}</b>"]
+    for section, items in menu.sections:
+        if not items:
+            continue
+        lines.append(f"\n<b>{escape(section)}</b>")
+        for item in items:
+            line = f"• {escape(item.name)}"
+            if item.description:
+                line += f" — {escape(item.description)}"
+            lines.append(line)
+    if len(lines) == 1:
+        lines.append("\nNo lunch items found.")
+    return "\n".join(lines)
 
 
 def build_application(settings: Settings) -> Application:
@@ -152,6 +174,7 @@ def build_application(settings: Settings) -> Application:
     from sources.wednesday import WednesdaySeminarSource
 
     sources = [ThermalSeminarsSource(settings.website_url)]
+    lunch_source = LessingsLunchSource(settings.lunch_menu_url)
     if settings.wednesday_spreadsheet_ids:
         sources.append(WednesdaySeminarSource(list(settings.wednesday_spreadsheet_ids), settings.google_token_file))
     if settings.journal_club_spreadsheet_ids:
@@ -192,6 +215,19 @@ def build_application(settings: Settings) -> Application:
         start_date = week_start(datetime.now(timezone).date()) + timedelta(days=7)
         await send_period(update, start_date, "next week")
 
+    async def lunch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            menu = await asyncio.to_thread(lunch_source.fetch)
+            message = format_lunch(menu)
+        except Exception:
+            LOG.exception("Could not fetch the lunch menu")
+            message = "🍽 The lunch menu is temporarily unavailable."
+        await update.effective_message.reply_text(
+            message,
+            reply_markup=menu_markup(),
+            parse_mode=ParseMode.HTML,
+        )
+
     async def send_period(update: Update, start_date: date, label: str) -> None:
         end_date = start_date + timedelta(days=7)
         talks = cache.load()
@@ -209,7 +245,7 @@ def build_application(settings: Settings) -> Application:
         if query is None:
             return
         await query.answer()
-        handlers = {"today": today, "week": week, "nextweek": nextweek, "help": help_command, "stop": stop}
+        handlers = {"today": today, "week": week, "nextweek": nextweek, "lunch": lunch, "help": help_command, "stop": stop}
         handler = handlers.get(query.data or "")
         if handler:
             await handler(update, context)
@@ -246,7 +282,7 @@ def build_application(settings: Settings) -> Application:
 
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(
-            "Choose a button below, or use /today, /week, or /nextweek. /start subscribes to Monday announcements; /stop unsubscribes.",
+            "Choose a button below, or use /today, /week, /nextweek, or /lunch. /start subscribes to Monday announcements; /stop unsubscribes.",
             reply_markup=menu_markup(),
         )
 
@@ -256,6 +292,7 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("today", today))
     application.add_handler(CommandHandler("week", week))
     application.add_handler(CommandHandler("nextweek", nextweek))
+    application.add_handler(CommandHandler("lunch", lunch))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CallbackQueryHandler(button_callback))
     if application.job_queue is None:
