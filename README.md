@@ -1,24 +1,16 @@
 # Telegram talks bot
 
-This bot reads a Google Sheet and exposes `/today`. Chats that send `/start` receive the weekly announcement every Monday at 10:00 in `BOT_TIMEZONE`; `/stop` unsubscribes.
+This bot reads the public [Thermal Seminars](https://sites.google.com/view/thermalseminars) website, refreshes a local JSON cache every Saturday, and exposes `/today` and `/week`. Chats that send `/start` receive the cached weekly announcement every Monday at 10:00 in `BOT_TIMEZONE`; `/stop` unsubscribes.
 
-## Sheet format
+## Website data
 
-The first row must contain `date` and `title`. Optional columns are `time`, `speaker`, `location`, `description`, and `link`. The parser also accepts the current layout: `Dates` (`MM/DD`, interpreted in the current year), `Name`, `Talk Title`, and `Talk Abstract`.
-
-For the current sheet, the bot reads columns A:M:
-
-```text
-Dates | Name | ... | Talk Title | Talk Abstract
-09/14 | A. Researcher | ... | Distributed Systems | An introduction to the topic
-```
+The parser reads the `Future Seminars schedule` section and stops at `Past Seminars`. It extracts the date, speaker, affiliation, title, abstract, and arXiv link when present. Short dates such as `Sep 15` are interpreted using the current year.
 
 ## Setup
 
 1. Create a bot with `@BotFather` and copy its token.
-2. In Google Cloud, enable the Google Sheets API, create a service account, and download its JSON key.
-3. Share the spreadsheet with the service account email as a viewer. Put the sheet ID and key path in `.env` (copy `.env.example`).
-4. Install dependencies and run:
+2. Put the token in `.env` (copy `.env.example`). No Google credentials are needed.
+3. Install dependencies and run:
 
 ```bash
 python3 -m venv .venv
@@ -28,4 +20,4 @@ set -a; source .env; set +a
 python bot.py
 ```
 
-The bot uses polling, so it can run on a small VM or container without a public webhook endpoint. Keep `.env`, the service-account JSON, and `subscribers.json` out of version control.
+The first run fetches the website immediately and writes `talks-cache.json`. Later runs read the cache until the next Saturday refresh. Keep `.env`, `talks-cache.json`, and `subscribers.json` out of version control. The bot uses polling, so it can run on a terminal-only remote server.
