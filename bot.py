@@ -64,12 +64,12 @@ class Talk:
 
 
 HEADER_ALIASES = {
-    "date": {"date", "day", "when"},
-    "title": {"title", "talk", "talk title", "name"},
+    "date": {"date", "dates", "day", "when"},
+    "title": {"title", "talk", "talk title"},
     "time": {"time", "start", "start time"},
-    "speaker": {"speaker", "presenter", "lecturer"},
+    "speaker": {"speaker", "presenter", "lecturer", "name"},
     "location": {"location", "room", "where"},
-    "description": {"description", "abstract", "details"},
+    "description": {"description", "abstract", "talk abstract", "details"},
     "link": {"link", "url", "slides", "recording"},
 }
 
@@ -85,7 +85,13 @@ def _parse_date(value: Any) -> date:
             return datetime.strptime(text, fmt).date()
         except ValueError:
             continue
-    raise ValueError(f"Unsupported talk date: {text!r}; use YYYY-MM-DD")
+    for fmt in ("%m/%d", "%m-%d"):
+        try:
+            parsed = datetime.strptime(text, fmt)
+            return parsed.replace(year=date.today().year).date()
+        except ValueError:
+            continue
+    raise ValueError(f"Unsupported talk date: {text!r}; use YYYY-MM-DD or MM/DD")
 
 
 def parse_rows(rows: list[list[Any]]) -> list[Talk]:

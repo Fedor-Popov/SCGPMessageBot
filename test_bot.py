@@ -12,6 +12,16 @@ def test_parse_rows_and_sorting():
     assert [talk.title for talk in talks] == ["Earlier", "Later"]
 
 
+def test_parse_custom_column_names_and_short_date():
+    talks = parse_rows([
+        ["Dates", "Name", "Talk Title", "Talk Abstract"],
+        ["09/09", "A. Researcher", "A Talk", "An abstract"],
+    ])
+    assert talks[0].title == "A Talk"
+    assert talks[0].speaker == "A. Researcher"
+    assert talks[0].description == "An abstract"
+
+
 def test_week_start():
     assert week_start(date(2026, 9, 16)) == date(2026, 9, 14)
 

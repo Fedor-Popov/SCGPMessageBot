@@ -4,11 +4,13 @@ This bot reads a Google Sheet and exposes `/today`. Chats that send `/start` rec
 
 ## Sheet format
 
-The first row must contain `date` and `title`. Optional columns are `time`, `speaker`, `location`, `description`, and `link`. Dates should use `YYYY-MM-DD`, for example:
+The first row must contain `date` and `title`. Optional columns are `time`, `speaker`, `location`, `description`, and `link`. The parser also accepts the current layout: `Dates` (`MM/DD`, interpreted in the current year), `Name`, `Talk Title`, and `Talk Abstract`.
+
+For the current sheet, the bot reads columns A:M:
 
 ```text
-date       | title                    | time  | speaker      | location
-2026-09-14 | Distributed Systems      | 10:00 | A. Researcher| Room 101
+Dates | Name | ... | Talk Title | Talk Abstract
+09/14 | A. Researcher | ... | Distributed Systems | An introduction to the topic
 ```
 
 ## Setup
