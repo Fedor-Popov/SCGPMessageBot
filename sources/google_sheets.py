@@ -43,7 +43,7 @@ def _parse_date(value: Any) -> date:
     raise ValueError(f"Unsupported spreadsheet date {text!r}")
 
 
-def parse_rows(rows: list[list[Any]], source: str) -> list[Event]:
+def parse_rows(rows: list[list[Any]], source: str, default_time: str = "", default_location: str = "") -> list[Event]:
     if not rows:
         return []
     headers = {_header(value): index for index, value in enumerate(rows[0])}
@@ -67,8 +67,8 @@ def parse_rows(rows: list[list[Any]], source: str) -> list[Event]:
                 title=cell(row, "title"),
                 speaker=cell(row, "speaker"),
                 affiliation=cell(row, "affiliation"),
-                time=cell(row, "time"),
-                location=cell(row, "location"),
+                time=cell(row, "time") or default_time,
+                location=cell(row, "location") or default_location,
                 description=cell(row, "description"),
                 link=cell(row, "link"),
                 source=source,
@@ -81,10 +81,14 @@ def parse_rows(rows: list[list[Any]], source: str) -> list[Event]:
 class GoogleSheetsSource:
     name = "google-sheets"
 
-    def __init__(self, spreadsheet_ids: list[str], token_file: Path | None = None, cell_range: str = "A:ZZ") -> None:
+    def __init__(self, spreadsheet_ids: list[str], token_file: Path | None = None, cell_range: str = "A:ZZ", *, default_time: str = "", default_location: str = "", source_name: str | None = None) -> None:
         self.spreadsheet_ids = spreadsheet_ids
         self.token_file = token_file
         self.cell_range = cell_range
+        self.default_time = default_time
+        self.default_location = default_location
+        if source_name:
+            self.name = source_name
 
     def _service(self):
         if self.token_file and self.token_file.exists():
@@ -112,5 +116,5 @@ class GoogleSheetsSource:
             result = service.spreadsheets().values().get(
                 spreadsheetId=spreadsheet_id, range=self.cell_range
             ).execute()
-            events.extend(parse_rows(result.get("values", []), f"google:{spreadsheet_id}"))
+            events.extend(parse_rows(result.get("values", []), f"google:{spreadsheet_id}", self.default_time, self.default_location))
         return events

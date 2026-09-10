@@ -19,7 +19,9 @@ To add another event series, create `sources/my_event.py` with a class implement
 Current modules:
 
 - `sources/thermal.py` reads the public Thermal Seminars website.
-- `sources/google_sheets.py` reads any number of Google Sheets by header names, so column positions may differ.
+- `sources/wednesday.py` reads Wednesday Seminar sheets and supplies the default 2:00 PM / room 313 metadata.
+- `sources/journal_club.py` reads Journal Club sheets and supplies the default 2:00 PM / Common Room metadata.
+- `sources/google_sheets.py` provides the reusable Google Sheets adapter; column positions may differ.
 - `cache.py` stores the combined normalized events locally as JSON.
 
 ## Configuration
@@ -27,7 +29,9 @@ Current modules:
 Copy `.env.example` to `.env` and set the Telegram token. The website source works without Google credentials. To enable Sheets, set two comma-separated IDs:
 
 ```env
-GOOGLE_SPREADSHEET_IDS=first_sheet_id,second_sheet_id
+GOOGLE_WEDNESDAY_SPREADSHEET_IDS=first_sheet_id
+GOOGLE_JOURNAL_CLUB_SPREADSHEET_IDS=
+GOOGLE_THERMAL_SPREADSHEET_IDS=second_sheet_id
 GOOGLE_OAUTH_TOKEN_FILE=google-token.json
 ```
 

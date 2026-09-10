@@ -30,6 +30,9 @@ class Settings:
     website_url: str
     cache_file: Path
     google_spreadsheet_ids: tuple[str, ...]
+    wednesday_spreadsheet_ids: tuple[str, ...]
+    journal_club_spreadsheet_ids: tuple[str, ...]
+    thermal_spreadsheet_ids: tuple[str, ...]
     google_token_file: Path
     timezone: str
     refresh_hour: int
@@ -41,11 +44,20 @@ class Settings:
     def from_env(cls) -> "Settings":
         if not os.getenv("TELEGRAM_BOT_TOKEN"):
             raise RuntimeError("Missing required environment variable: TELEGRAM_BOT_TOKEN")
+        spreadsheet_ids = tuple(value.strip() for value in os.getenv("GOOGLE_SPREADSHEET_IDS", "").split(",") if value.strip())
+        wednesday_ids = tuple(value.strip() for value in os.getenv("GOOGLE_WEDNESDAY_SPREADSHEET_IDS", "").split(",") if value.strip())
+        journal_ids = tuple(value.strip() for value in os.getenv("GOOGLE_JOURNAL_CLUB_SPREADSHEET_IDS", "").split(",") if value.strip())
+        thermal_ids = tuple(value.strip() for value in os.getenv("GOOGLE_THERMAL_SPREADSHEET_IDS", "").split(",") if value.strip())
+        if spreadsheet_ids and not (wednesday_ids or journal_ids or thermal_ids):
+            wednesday_ids, thermal_ids = spreadsheet_ids[:1], spreadsheet_ids[1:]
         return cls(
             telegram_token=os.environ["TELEGRAM_BOT_TOKEN"],
             website_url=os.getenv("SEMINAR_WEBSITE_URL", "https://sites.google.com/view/thermalseminars"),
             cache_file=Path(os.getenv("TALKS_CACHE_FILE", "talks-cache.json")),
-            google_spreadsheet_ids=tuple(value.strip() for value in os.getenv("GOOGLE_SPREADSHEET_IDS", "").split(",") if value.strip()),
+            google_spreadsheet_ids=spreadsheet_ids,
+            wednesday_spreadsheet_ids=wednesday_ids,
+            journal_club_spreadsheet_ids=journal_ids,
+            thermal_spreadsheet_ids=thermal_ids,
             google_token_file=Path(os.getenv("GOOGLE_OAUTH_TOKEN_FILE", "google-token.json")),
             timezone=os.getenv("BOT_TIMEZONE", "America/New_York"),
             refresh_hour=int(os.getenv("REFRESH_HOUR", "3")),
@@ -130,12 +142,18 @@ def menu_markup() -> InlineKeyboardMarkup:
 
 
 def build_application(settings: Settings) -> Application:
-    from sources.google_sheets import GoogleSheetsSource
+    from sources.journal_club import JournalClubSource
     from sources.thermal import ThermalSeminarsSource
+    from sources.wednesday import WednesdaySeminarSource
 
     sources = [ThermalSeminarsSource(settings.website_url)]
-    if settings.google_spreadsheet_ids:
-        sources.append(GoogleSheetsSource(list(settings.google_spreadsheet_ids), settings.google_token_file))
+    if settings.wednesday_spreadsheet_ids:
+        sources.append(WednesdaySeminarSource(list(settings.wednesday_spreadsheet_ids), settings.google_token_file))
+    if settings.journal_club_spreadsheet_ids:
+        sources.append(JournalClubSource(list(settings.journal_club_spreadsheet_ids), settings.google_token_file))
+    if settings.thermal_spreadsheet_ids:
+        from sources.google_sheets import GoogleSheetsSource
+        sources.append(GoogleSheetsSource(list(settings.thermal_spreadsheet_ids), settings.google_token_file, default_time="2:00 PM", default_location="102", source_name="thermal-seminar-sheet"))
     cache = EventCache(settings.cache_file)
     subscribers = SubscriberStore(settings.subscribers_file)
     timezone = ZoneInfo(settings.timezone)
