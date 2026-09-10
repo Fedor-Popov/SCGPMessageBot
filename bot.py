@@ -193,8 +193,9 @@ def build_application(settings: Settings) -> Application:
     # PTB v20+ maps 0-6 to Sunday-Saturday: Saturday=6, Monday=1.
     application.job_queue.run_daily(refresh, time=time(settings.refresh_hour, 0, tzinfo=timezone), days=(6,), name="weekly-refresh")
     application.job_queue.run_daily(weekly_announcement, time=time(settings.announcement_hour, 0, tzinfo=timezone), days=(1,), name="weekly-talks")
-    if not cache.load():
-        application.job_queue.run_once(refresh, when=timedelta(seconds=1), name="initial-refresh")
+    # Refresh once at every startup so newly configured sources are included
+    # immediately; the regular Saturday job keeps the cache current afterward.
+    application.job_queue.run_once(refresh, when=timedelta(seconds=1), name="initial-refresh")
     return application
 
 
