@@ -15,8 +15,8 @@ from zoneinfo import ZoneInfo
 from cache import EventCache
 from dotenv import load_dotenv
 from events import Event
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 LOG = logging.getLogger(__name__)
 load_dotenv()
@@ -109,6 +109,20 @@ def display_date(value: date, include_weekday: bool = False) -> str:
     return f"{value:%A}, {formatted}" if include_weekday else formatted
 
 
+def menu_markup() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("Today", callback_data="today"),
+            InlineKeyboardButton("This week", callback_data="week"),
+        ],
+        [
+            InlineKeyboardButton("Next week", callback_data="nextweek"),
+            InlineKeyboardButton("Help", callback_data="help"),
+        ],
+        [InlineKeyboardButton("Stop announcements", callback_data="stop")],
+    ])
+
+
 def build_application(settings: Settings) -> Application:
     from sources.google_sheets import GoogleSheetsSource
     from sources.thermal import ThermalSeminarsSource
@@ -123,17 +137,23 @@ def build_application(settings: Settings) -> Application:
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_chat:
             await subscribers.add(update.effective_chat.id)
-            await update.effective_message.reply_text("Subscribed to Monday talks announcements. Use /today to see today’s talks.")
+            await update.effective_message.reply_text(
+                "Subscribed to Monday talks announcements. Choose an option below, or use /today, /week, or /nextweek.",
+                reply_markup=menu_markup(),
+            )
 
     async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_chat:
             await subscribers.remove(update.effective_chat.id)
-            await update.effective_message.reply_text("Unsubscribed from weekly announcements.")
+            await update.effective_message.reply_text("Unsubscribed from weekly announcements.", reply_markup=menu_markup())
 
     async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         now = datetime.now(timezone).date()
         talks = cache.load()
-        await update.effective_message.reply_text(format_talks((talk for talk in talks if talk.date == now), f"Talks for {display_date(now, True)}"))
+        await update.effective_message.reply_text(
+            format_talks((talk for talk in talks if talk.date == now), f"Talks for {display_date(now, True)}"),
+            reply_markup=menu_markup(),
+        )
 
     async def week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await send_period(update, week_start(datetime.now(timezone).date()), "this week")
@@ -148,7 +168,17 @@ def build_application(settings: Settings) -> Application:
         matching_talks = (talk for talk in talks if start_date <= talk.date < end_date)
         last_date = end_date - timedelta(days=1)
         heading = f"Talks {label} ({start_date:%b} {start_date.day}–{last_date:%b} {last_date.day})"
-        await update.effective_message.reply_text(format_talks(matching_talks, heading))
+        await update.effective_message.reply_text(format_talks(matching_talks, heading), reply_markup=menu_markup())
+
+    async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if query is None:
+            return
+        await query.answer()
+        handlers = {"today": today, "week": week, "nextweek": nextweek, "help": help_command, "stop": stop}
+        handler = handlers.get(query.data or "")
+        if handler:
+            await handler(update, context)
 
     async def refresh(context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
@@ -181,7 +211,10 @@ def build_application(settings: Settings) -> Application:
                 LOG.exception("Could not send weekly announcement to chat %s", chat_id)
 
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await update.effective_message.reply_text("Use /today, /week, or /nextweek. /start subscribes to Monday announcements; /stop unsubscribes.")
+        await update.effective_message.reply_text(
+            "Choose a button below, or use /today, /week, or /nextweek. /start subscribes to Monday announcements; /stop unsubscribes.",
+            reply_markup=menu_markup(),
+        )
 
     application = Application.builder().token(settings.telegram_token).build()
     application.add_handler(CommandHandler("start", start))
@@ -190,6 +223,7 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("week", week))
     application.add_handler(CommandHandler("nextweek", nextweek))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CallbackQueryHandler(button_callback))
     if application.job_queue is None:
         raise RuntimeError('Install the job queue extra: pip install "python-telegram-bot[job-queue]"')
     application.job_queue.run_repeating(
