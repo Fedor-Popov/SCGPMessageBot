@@ -52,7 +52,9 @@ class Settings:
         journal_ids = tuple(value.strip() for value in os.getenv("GOOGLE_JOURNAL_CLUB_SPREADSHEET_IDS", "").split(",") if value.strip())
         thermal_ids = tuple(value.strip() for value in os.getenv("GOOGLE_THERMAL_SPREADSHEET_IDS", "").split(",") if value.strip())
         if spreadsheet_ids and not (wednesday_ids or journal_ids or thermal_ids):
-            wednesday_ids, thermal_ids = spreadsheet_ids[:1], spreadsheet_ids[1:]
+            # Backward-compatible mapping for the original two-sheet setup:
+            # first sheet = Wednesday Seminar, second sheet = Journal Club.
+            wednesday_ids, journal_ids = spreadsheet_ids[:1], spreadsheet_ids[1:]
         return cls(
             telegram_token=os.environ["TELEGRAM_BOT_TOKEN"],
             website_url=os.getenv("SEMINAR_WEBSITE_URL", "https://sites.google.com/view/thermalseminars"),

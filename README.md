@@ -33,7 +33,7 @@ Copy `.env.example` to `.env` and set the Telegram token. The website source wor
 ```env
 GOOGLE_WEDNESDAY_SPREADSHEET_IDS=first_sheet_id
 GOOGLE_JOURNAL_CLUB_SPREADSHEET_IDS=
-GOOGLE_THERMAL_SPREADSHEET_IDS=second_sheet_id
+GOOGLE_THERMAL_SPREADSHEET_IDS=
 GOOGLE_OAUTH_TOKEN_FILE=google-token.json
 ```
 
