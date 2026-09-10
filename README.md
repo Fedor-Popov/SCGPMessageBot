@@ -16,7 +16,6 @@ The parser reads the `Future Seminars schedule` section and stops at `Past Semin
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-set -a; source .env; set +a
 python bot.py
 ```
 

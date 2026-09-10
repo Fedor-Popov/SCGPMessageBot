@@ -12,10 +12,12 @@ from pathlib import Path
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
+from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 LOG = logging.getLogger(__name__)
+load_dotenv()
 
 
 @dataclass(frozen=True)
