@@ -59,4 +59,4 @@ uv pip install -r requirements.txt
 uv run python bot.py
 ```
 
-The first start schedules an immediate refresh if no cache exists. Later refreshes run on Saturday at `REFRESH_HOUR` in `BOT_TIMEZONE`.
+The bot refreshes immediately at startup and then every `REFRESH_INTERVAL_HOURS` (one hour by default). The Monday announcement is sent at `ANNOUNCEMENT_HOUR` in `BOT_TIMEZONE`.

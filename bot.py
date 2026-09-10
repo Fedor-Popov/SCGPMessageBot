@@ -31,6 +31,7 @@ class Settings:
     google_token_file: Path
     timezone: str
     refresh_hour: int
+    refresh_interval_hours: int
     announcement_hour: int
     subscribers_file: Path
 
@@ -46,6 +47,7 @@ class Settings:
             google_token_file=Path(os.getenv("GOOGLE_OAUTH_TOKEN_FILE", "google-token.json")),
             timezone=os.getenv("BOT_TIMEZONE", "America/New_York"),
             refresh_hour=int(os.getenv("REFRESH_HOUR", "3")),
+            refresh_interval_hours=int(os.getenv("REFRESH_INTERVAL_HOURS", "1")),
             announcement_hour=int(os.getenv("ANNOUNCEMENT_HOUR", "10")),
             subscribers_file=Path(os.getenv("SUBSCRIBERS_FILE", "subscribers.json")),
         )
@@ -190,8 +192,12 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("help", help_command))
     if application.job_queue is None:
         raise RuntimeError('Install the job queue extra: pip install "python-telegram-bot[job-queue]"')
-    # PTB v20+ maps 0-6 to Sunday-Saturday: Saturday=6, Monday=1.
-    application.job_queue.run_daily(refresh, time=time(settings.refresh_hour, 0, tzinfo=timezone), days=(6,), name="weekly-refresh")
+    application.job_queue.run_repeating(
+        refresh,
+        interval=timedelta(hours=settings.refresh_interval_hours),
+        first=timedelta(hours=settings.refresh_interval_hours),
+        name="hourly-refresh",
+    )
     application.job_queue.run_daily(weekly_announcement, time=time(settings.announcement_hour, 0, tzinfo=timezone), days=(1,), name="weekly-talks")
     # Refresh once at every startup so newly configured sources are included
     # immediately; the regular Saturday job keeps the cache current afterward.
