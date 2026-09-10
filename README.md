@@ -21,6 +21,7 @@ Current modules:
 - `sources/thermal.py` reads the public Thermal Seminars website.
 - `sources/wednesday.py` reads Wednesday Seminar sheets and supplies the default 2:00 PM / room 313 metadata.
 - `sources/journal_club.py` reads Journal Club sheets and supplies the default 2:00 PM / Common Room metadata.
+- `sources/bouncing.py` adds a recurring Bouncing Seminar every Friday at 11:00 AM in the Common Room.
 - `sources/google_sheets.py` provides the reusable Google Sheets adapter; column positions may differ.
 - `lunch.py` reads and caches the current Lessings Simons Center cafe menu for the `Lunch` button and `/lunch` command. It refreshes every 10 minutes.
 - `cache.py` stores the combined normalized events locally as JSON.

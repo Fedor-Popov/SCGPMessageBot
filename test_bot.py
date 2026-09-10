@@ -7,6 +7,7 @@ from events import Event
 from website import parse_schedule
 from sources.google_sheets import parse_rows
 from lunch import LunchCache, LunchItem, LunchMenu
+from sources.bouncing import BouncingSeminarSource
 
 
 def test_parse_schedule():
@@ -75,3 +76,11 @@ def test_lunch_cache_round_trip(tmp_path: Path):
     cache = LunchCache(tmp_path / "lunch.json")
     cache.save(menu)
     assert cache.load() == menu
+
+
+def test_bouncing_seminar_is_friday_in_common_room():
+    events = BouncingSeminarSource(3).fetch()
+    assert len(events) == 3
+    assert all(event.date.weekday() == 4 for event in events)
+    assert all(event.time == "11:00 AM" for event in events)
+    assert all(event.location == "Common Room" for event in events)

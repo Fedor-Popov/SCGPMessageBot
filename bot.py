@@ -172,10 +172,11 @@ def format_lunch(menu: LunchMenu) -> str:
 
 def build_application(settings: Settings) -> Application:
     from sources.journal_club import JournalClubSource
+    from sources.bouncing import BouncingSeminarSource
     from sources.thermal import ThermalSeminarsSource
     from sources.wednesday import WednesdaySeminarSource
 
-    sources = [ThermalSeminarsSource(settings.website_url)]
+    sources = [ThermalSeminarsSource(settings.website_url), BouncingSeminarSource()]
     lunch_source = LessingsLunchSource(settings.lunch_menu_url)
     lunch_cache = LunchCache(settings.lunch_cache_file)
     if settings.wednesday_spreadsheet_ids:
