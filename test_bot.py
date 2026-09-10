@@ -49,7 +49,8 @@ def test_format_talks_uses_html_emphasis():
     ], "Talks")
     assert "<b>A &lt;Talk&gt;</b>" in message
     assert "<i>A Speaker</i>" in message
-    assert "</i>)\n\n• <b>Another Talk</b>" in message
+    assert "Tuesday:\n• <b>A &lt;Talk&gt;</b>" in message
+    assert "Wednesday:\n• <b>Another Talk</b>" in message
 
 
 def test_sheet_rows_keep_missing_title_and_abstract():

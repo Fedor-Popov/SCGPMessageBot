@@ -107,8 +107,8 @@ def format_talks(talks: Iterable[Event], heading: str) -> str:
     talks = list(talks)
     if not talks:
         return f"{escape(heading)}\n\nNo talks found."
-    blocks: list[str] = []
-    for talk in talks:
+    talks_by_day: dict[date, list[str]] = {}
+    for talk in sorted(talks, key=lambda item: (item.date, item.title.lower(), item.speaker.lower())):
         speaker = f"<i>{escape(talk.speaker)}</i>" if talk.speaker else ""
         details = " · ".join(
             part for part in (escape(talk.time), speaker, escape(talk.affiliation), escape(talk.location)) if part
@@ -119,8 +119,12 @@ def format_talks(talks: Iterable[Event], heading: str) -> str:
             lines.append(f"  {escape(talk.description)}")
         if talk.link:
             lines.append(f"  {escape(talk.link)}")
-        blocks.append("\n".join(lines))
-    return f"{escape(heading)}\n\n" + "\n\n".join(blocks)
+        talks_by_day.setdefault(talk.date, []).append("\n".join(lines))
+    day_blocks = [
+        f"{escape(day.strftime('%A'))}:\n" + "\n\n".join(entries)
+        for day, entries in sorted(talks_by_day.items())
+    ]
+    return f"{escape(heading)}\n\n" + "\n\n".join(day_blocks)
 
 
 def display_date(value: date, include_weekday: bool = False) -> str:
