@@ -2,3 +2,6 @@ python-telegram-bot[job-queue]>=22.0,<23.0
 requests>=2.32,<3.0
 beautifulsoup4>=4.13,<5.0
 python-dotenv>=1.0,<2.0
+google-api-python-client>=2.160,<3.0
+google-auth>=2.37,<3.0
+google-auth-oauthlib>=1.2,<2.0

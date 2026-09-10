@@ -5,4 +5,5 @@ __pycache__/
 subscribers.json
 google-token.json
 talks-cache.json
+google-token.json
 service-account*.json

@@ -12,7 +12,7 @@ from typing import Any
 import requests
 from bs4 import BeautifulSoup
 
-from bot import Talk
+from events import Event
 
 MONTHS = "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec"
 DATE_LINE = re.compile(rf"^(?P<month>{MONTHS})\s+(?P<day>\d{{1,2}})(?:\s*:\s*|\s+|$)(?P<details>.*)$")
@@ -65,7 +65,7 @@ def _join_site_fragments(lines: list[str]) -> list[str]:
     return joined
 
 
-def _parse_entry(lines: list[str], year: int) -> Talk | None:
+def _parse_entry(lines: list[str], year: int) -> Event | None:
     match = DATE_LINE.match(lines[0])
     if not match:
         return None
@@ -109,10 +109,10 @@ def _parse_entry(lines: list[str], year: int) -> Talk | None:
         break
     if not title:
         return None
-    return Talk(talk_date, title, speaker=speaker, location=affiliation, description=abstract, link=link)
+    return Event(talk_date, title, speaker=speaker, affiliation=affiliation, description=abstract, link=link, source="thermal")
 
 
-def parse_schedule(html: str, year: int | None = None) -> list[Talk]:
+def parse_schedule(html: str, year: int | None = None) -> list[Event]:
     year = year or date.today().year
     lines = _join_site_fragments(_section(_clean_lines(html), "Future Seminars schedule", "Past Seminars"))
     entries: list[list[str]] = []
@@ -131,10 +131,11 @@ def parse_schedule(html: str, year: int | None = None) -> list[Talk]:
 
 
 class WebsiteTalkSource:
+    name = "thermal"
     def __init__(self, url: str) -> None:
         self.url = url
 
-    def fetch(self) -> list[Talk]:
+    def fetch(self) -> list[Event]:
         response = requests.get(self.url, timeout=30, headers={"User-Agent": "SCGPMessageBot/1.0"})
         response.raise_for_status()
         talks = parse_schedule(response.text)
@@ -147,12 +148,12 @@ class JsonTalkCache:
     def __init__(self, path: Path) -> None:
         self.path = path
 
-    def load(self) -> list[Talk]:
+    def load(self) -> list[Event]:
         if not self.path.exists():
             return []
         payload: dict[str, Any] = json.loads(self.path.read_text())
         return [
-            Talk(
+            Event(
                 date.fromisoformat(item["date"]), item["title"], item.get("time", ""),
                 item.get("speaker", ""), item.get("location", ""),
                 item.get("description", ""), item.get("link", ""),
@@ -160,7 +161,7 @@ class JsonTalkCache:
             for item in payload.get("talks", [])
         ]
 
-    def save(self, talks: list[Talk]) -> None:
+    def save(self, talks: list[Event]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "updated_at": datetime.now().astimezone().isoformat(),

@@ -12,7 +12,9 @@ from pathlib import Path
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
+from cache import EventCache
 from dotenv import load_dotenv
+from events import Event
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
@@ -21,21 +23,12 @@ load_dotenv()
 
 
 @dataclass(frozen=True)
-class Talk:
-    date: date
-    title: str
-    time: str = ""
-    speaker: str = ""
-    location: str = ""
-    description: str = ""
-    link: str = ""
-
-
-@dataclass(frozen=True)
 class Settings:
     telegram_token: str
     website_url: str
     cache_file: Path
+    google_spreadsheet_ids: tuple[str, ...]
+    google_token_file: Path
     timezone: str
     refresh_hour: int
     announcement_hour: int
@@ -49,6 +42,8 @@ class Settings:
             telegram_token=os.environ["TELEGRAM_BOT_TOKEN"],
             website_url=os.getenv("SEMINAR_WEBSITE_URL", "https://sites.google.com/view/thermalseminars"),
             cache_file=Path(os.getenv("TALKS_CACHE_FILE", "talks-cache.json")),
+            google_spreadsheet_ids=tuple(value.strip() for value in os.getenv("GOOGLE_SPREADSHEET_IDS", "").split(",") if value.strip()),
+            google_token_file=Path(os.getenv("GOOGLE_OAUTH_TOKEN_FILE", "google-token.json")),
             timezone=os.getenv("BOT_TIMEZONE", "America/New_York"),
             refresh_hour=int(os.getenv("REFRESH_HOUR", "3")),
             announcement_hour=int(os.getenv("ANNOUNCEMENT_HOUR", "10")),
@@ -92,13 +87,13 @@ def week_start(day: date) -> date:
     return day - timedelta(days=day.weekday())
 
 
-def format_talks(talks: Iterable[Talk], heading: str) -> str:
+def format_talks(talks: Iterable[Event], heading: str) -> str:
     talks = list(talks)
     if not talks:
         return f"{heading}\n\nNo talks found."
     lines = [heading, ""]
     for talk in talks:
-        details = " · ".join(part for part in (talk.time, talk.speaker, talk.location) if part)
+        details = " · ".join(part for part in (talk.time, talk.speaker, talk.affiliation, talk.location) if part)
         lines.append(f"• {talk.title}" + (f" ({details})" if details else ""))
         if talk.description:
             lines.append(f"  {talk.description}")
@@ -113,10 +108,13 @@ def display_date(value: date, include_weekday: bool = False) -> str:
 
 
 def build_application(settings: Settings) -> Application:
-    from website import JsonTalkCache, WebsiteTalkSource
+    from sources.google_sheets import GoogleSheetsSource
+    from sources.thermal import ThermalSeminarsSource
 
-    source = WebsiteTalkSource(settings.website_url)
-    cache = JsonTalkCache(settings.cache_file)
+    sources = [ThermalSeminarsSource(settings.website_url)]
+    if settings.google_spreadsheet_ids:
+        sources.append(GoogleSheetsSource(list(settings.google_spreadsheet_ids), settings.google_token_file))
+    cache = EventCache(settings.cache_file)
     subscribers = SubscriberStore(settings.subscribers_file)
     timezone = ZoneInfo(settings.timezone)
 
@@ -136,20 +134,33 @@ def build_application(settings: Settings) -> Application:
         await update.effective_message.reply_text(format_talks((talk for talk in talks if talk.date == now), f"Talks for {display_date(now, True)}"))
 
     async def week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        today_date = datetime.now(timezone).date()
-        start_date = week_start(today_date)
+        await send_period(update, week_start(datetime.now(timezone).date()), "this week")
+
+    async def nextweek(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        start_date = week_start(datetime.now(timezone).date()) + timedelta(days=7)
+        await send_period(update, start_date, "next week")
+
+    async def send_period(update: Update, start_date: date, label: str) -> None:
         end_date = start_date + timedelta(days=7)
         talks = cache.load()
         matching_talks = (talk for talk in talks if start_date <= talk.date < end_date)
         last_date = end_date - timedelta(days=1)
-        heading = f"Talks this week ({start_date:%b} {start_date.day}–{last_date:%b} {last_date.day})"
+        heading = f"Talks {label} ({start_date:%b} {start_date.day}–{last_date:%b} {last_date.day})"
         await update.effective_message.reply_text(format_talks(matching_talks, heading))
 
     async def refresh(context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
-            talks = await asyncio.to_thread(source.fetch)
-            cache.save(talks)
-            LOG.info("Refreshed %d talks into %s", len(talks), settings.cache_file)
+            events: list[Event] = []
+            for source in sources:
+                try:
+                    events.extend(await asyncio.to_thread(source.fetch))
+                except Exception:
+                    LOG.exception("Source %s failed; continuing with other sources", source.name)
+            if not events:
+                raise RuntimeError("All event sources failed or returned no events")
+            unique = {(event.date, event.title.lower(), event.speaker.lower()): event for event in events}
+            cache.save(sorted(unique.values(), key=lambda event: (event.date, event.title.lower())))
+            LOG.info("Refreshed %d events from %d sources into %s", len(unique), len(sources), settings.cache_file)
         except Exception:
             LOG.exception("Weekly seminar refresh failed; retaining existing cache")
 
@@ -168,13 +179,14 @@ def build_application(settings: Settings) -> Application:
                 LOG.exception("Could not send weekly announcement to chat %s", chat_id)
 
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await update.effective_message.reply_text("Use /today for today’s talks, or /week for the current week. /start subscribes to Monday announcements; /stop unsubscribes.")
+        await update.effective_message.reply_text("Use /today, /week, or /nextweek. /start subscribes to Monday announcements; /stop unsubscribes.")
 
     application = Application.builder().token(settings.telegram_token).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("stop", stop))
     application.add_handler(CommandHandler("today", today))
     application.add_handler(CommandHandler("week", week))
+    application.add_handler(CommandHandler("nextweek", nextweek))
     application.add_handler(CommandHandler("help", help_command))
     if application.job_queue is None:
         raise RuntimeError('Install the job queue extra: pip install "python-telegram-bot[job-queue]"')

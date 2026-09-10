@@ -1,8 +1,10 @@
 from datetime import date
 from pathlib import Path
 
-from bot import Talk, format_talks, week_start
-from website import JsonTalkCache, parse_schedule
+from bot import format_talks, week_start
+from cache import EventCache
+from events import Event
+from website import parse_schedule
 
 
 def test_parse_schedule():
@@ -19,14 +21,14 @@ def test_parse_schedule():
     assert len(talks) == 1
     assert talks[0].date == date(2026, 9, 15)
     assert talks[0].speaker == "Francesco Russo"
-    assert talks[0].location == "Ecole Polytechnique, CPHT"
+    assert talks[0].affiliation == "Ecole Polytechnique, CPHT"
     assert talks[0].title == "Thermal One-point Functions"
     assert talks[0].link == "https://arxiv.org/abs/2606.17167"
 
 
 def test_cache_round_trip(tmp_path: Path):
-    cache = JsonTalkCache(tmp_path / "talks.json")
-    talks = [Talk(date(2026, 9, 15), "A Talk", speaker="A Speaker")]
+    cache = EventCache(tmp_path / "talks.json")
+    talks = [Event(date(2026, 9, 15), "A Talk", speaker="A Speaker")]
     cache.save(talks)
     assert cache.load() == talks
 
