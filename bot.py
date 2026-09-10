@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from html import escape
 import json
 import logging
 import os
@@ -16,6 +17,7 @@ from cache import EventCache
 from dotenv import load_dotenv
 from events import Event
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 LOG = logging.getLogger(__name__)
@@ -92,16 +94,20 @@ def week_start(day: date) -> date:
 def format_talks(talks: Iterable[Event], heading: str) -> str:
     talks = list(talks)
     if not talks:
-        return f"{heading}\n\nNo talks found."
-    lines = [heading, ""]
+        return f"{escape(heading)}\n\nNo talks found."
+    blocks: list[str] = []
     for talk in talks:
-        details = " · ".join(part for part in (talk.time, talk.speaker, talk.affiliation, talk.location) if part)
-        lines.append(f"• {talk.title}" + (f" ({details})" if details else ""))
+        speaker = f"<i>{escape(talk.speaker)}</i>" if talk.speaker else ""
+        details = " · ".join(
+            part for part in (escape(talk.time), speaker, escape(talk.affiliation), escape(talk.location)) if part
+        )
+        lines = [f"• <b>{escape(talk.title)}</b>" + (f" ({details})" if details else "")]
         if talk.description:
-            lines.append(f"  {talk.description}")
+            lines.append(f"  {escape(talk.description)}")
         if talk.link:
-            lines.append(f"  {talk.link}")
-    return "\n".join(lines)
+            lines.append(f"  {escape(talk.link)}")
+        blocks.append("\n".join(lines))
+    return f"{escape(heading)}\n\n" + "\n\n".join(blocks)
 
 
 def display_date(value: date, include_weekday: bool = False) -> str:
@@ -153,6 +159,7 @@ def build_application(settings: Settings) -> Application:
         await update.effective_message.reply_text(
             format_talks((talk for talk in talks if talk.date == now), f"Talks for {display_date(now, True)}"),
             reply_markup=menu_markup(),
+            parse_mode=ParseMode.HTML,
         )
 
     async def week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -168,7 +175,11 @@ def build_application(settings: Settings) -> Application:
         matching_talks = (talk for talk in talks if start_date <= talk.date < end_date)
         last_date = end_date - timedelta(days=1)
         heading = f"Talks {label} ({start_date:%b} {start_date.day}–{last_date:%b} {last_date.day})"
-        await update.effective_message.reply_text(format_talks(matching_talks, heading), reply_markup=menu_markup())
+        await update.effective_message.reply_text(
+            format_talks(matching_talks, heading),
+            reply_markup=menu_markup(),
+            parse_mode=ParseMode.HTML,
+        )
 
     async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
@@ -206,7 +217,7 @@ def build_application(settings: Settings) -> Application:
         message = format_talks(matching_talks, f"Talks this week ({start_date:%b} {start_date.day}–{last_date:%b} {last_date.day})")
         for chat_id in await subscribers.all():
             try:
-                await context.bot.send_message(chat_id=chat_id, text=message)
+                await context.bot.send_message(chat_id=chat_id, text=message, parse_mode=ParseMode.HTML, reply_markup=menu_markup())
             except Exception:
                 LOG.exception("Could not send weekly announcement to chat %s", chat_id)
 

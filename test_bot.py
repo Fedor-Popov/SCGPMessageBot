@@ -39,3 +39,13 @@ def test_week_start():
 
 def test_format_empty():
     assert format_talks([], "Talks") == "Talks\n\nNo talks found."
+
+
+def test_format_talks_uses_html_emphasis():
+    message = format_talks([
+        Event(date(2026, 9, 15), "A <Talk>", speaker="A Speaker"),
+        Event(date(2026, 9, 16), "Another Talk", speaker="Another Speaker"),
+    ], "Talks")
+    assert "<b>A &lt;Talk&gt;</b>" in message
+    assert "<i>A Speaker</i>" in message
+    assert "</i>)\n\n• <b>Another Talk</b>" in message
