@@ -7,6 +7,8 @@ from datetime import date, datetime
 
 import requests
 from bs4 import BeautifulSoup
+import json
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -19,6 +21,33 @@ class LunchItem:
 class LunchMenu:
     date: date
     sections: tuple[tuple[str, tuple[LunchItem, ...]], ...]
+
+
+class LunchCache:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def save(self, menu: LunchMenu) -> None:
+        payload = {
+            "date": menu.date.isoformat(),
+            "sections": [
+                {"name": name, "items": [{"name": item.name, "description": item.description} for item in items]}
+                for name, items in menu.sections
+            ],
+        }
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(payload, indent=2) + "\n")
+        self.path.chmod(0o600)
+
+    def load(self) -> LunchMenu | None:
+        if not self.path.exists():
+            return None
+        payload = json.loads(self.path.read_text())
+        sections = tuple(
+            (section["name"], tuple(LunchItem(**item) for item in section.get("items", [])))
+            for section in payload.get("sections", [])
+        )
+        return LunchMenu(date.fromisoformat(payload["date"]), sections)
 
 
 class LessingsLunchSource:

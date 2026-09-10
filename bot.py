@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 from cache import EventCache
 from dotenv import load_dotenv
 from events import Event
-from lunch import LessingsLunchSource, LunchMenu
+from lunch import LessingsLunchSource, LunchCache, LunchMenu
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
@@ -30,6 +30,7 @@ class Settings:
     telegram_token: str
     website_url: str
     lunch_menu_url: str
+    lunch_cache_file: Path
     cache_file: Path
     google_spreadsheet_ids: tuple[str, ...]
     wednesday_spreadsheet_ids: tuple[str, ...]
@@ -56,6 +57,7 @@ class Settings:
             telegram_token=os.environ["TELEGRAM_BOT_TOKEN"],
             website_url=os.getenv("SEMINAR_WEBSITE_URL", "https://sites.google.com/view/thermalseminars"),
             lunch_menu_url=os.getenv("LUNCH_MENU_URL", "https://www.lessings.com/my/lfsm/weekly-menu/simons-center"),
+            lunch_cache_file=Path(os.getenv("LUNCH_CACHE_FILE", "lunch-cache.json")),
             cache_file=Path(os.getenv("TALKS_CACHE_FILE", "talks-cache.json")),
             google_spreadsheet_ids=spreadsheet_ids,
             wednesday_spreadsheet_ids=wednesday_ids,
@@ -175,6 +177,7 @@ def build_application(settings: Settings) -> Application:
 
     sources = [ThermalSeminarsSource(settings.website_url)]
     lunch_source = LessingsLunchSource(settings.lunch_menu_url)
+    lunch_cache = LunchCache(settings.lunch_cache_file)
     if settings.wednesday_spreadsheet_ids:
         sources.append(WednesdaySeminarSource(list(settings.wednesday_spreadsheet_ids), settings.google_token_file))
     if settings.journal_club_spreadsheet_ids:
@@ -216,17 +219,21 @@ def build_application(settings: Settings) -> Application:
         await send_period(update, start_date, "next week")
 
     async def lunch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        try:
-            menu = await asyncio.to_thread(lunch_source.fetch)
-            message = format_lunch(menu)
-        except Exception:
-            LOG.exception("Could not fetch the lunch menu")
-            message = "🍽 The lunch menu is temporarily unavailable."
+        menu = lunch_cache.load()
+        message = format_lunch(menu) if menu else "🍽 The lunch menu is not available yet. Please try again shortly."
         await update.effective_message.reply_text(
             message,
             reply_markup=menu_markup(),
             parse_mode=ParseMode.HTML,
         )
+
+    async def refresh_lunch(context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            menu = await asyncio.to_thread(lunch_source.fetch)
+            lunch_cache.save(menu)
+            LOG.info("Refreshed lunch menu for %s into %s", menu.date, settings.lunch_cache_file)
+        except Exception:
+            LOG.exception("Lunch menu refresh failed; retaining existing cache")
 
     async def send_period(update: Update, start_date: date, label: str) -> None:
         end_date = start_date + timedelta(days=7)
@@ -302,6 +309,12 @@ def build_application(settings: Settings) -> Application:
         interval=timedelta(hours=settings.refresh_interval_hours),
         first=timedelta(hours=settings.refresh_interval_hours),
         name="hourly-refresh",
+    )
+    application.job_queue.run_repeating(
+        refresh_lunch,
+        interval=timedelta(minutes=10),
+        first=timedelta(seconds=1),
+        name="lunch-refresh",
     )
     application.job_queue.run_daily(weekly_announcement, time=time(settings.announcement_hour, 0, tzinfo=timezone), days=(1,), name="weekly-talks")
     # Refresh once at every startup so newly configured sources are included

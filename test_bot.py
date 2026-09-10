@@ -6,7 +6,7 @@ from cache import EventCache
 from events import Event
 from website import parse_schedule
 from sources.google_sheets import parse_rows
-from lunch import LunchItem, LunchMenu
+from lunch import LunchCache, LunchItem, LunchMenu
 
 
 def test_parse_schedule():
@@ -68,3 +68,10 @@ def test_format_lunch():
     assert "Thursday, September 10" in message
     assert "<b>Soup</b>" in message
     assert "Tomato Soup — With herbs" in message
+
+
+def test_lunch_cache_round_trip(tmp_path: Path):
+    menu = LunchMenu(date(2026, 9, 10), (("Soup", (LunchItem("Tomato Soup", "With herbs"),)),))
+    cache = LunchCache(tmp_path / "lunch.json")
+    cache.save(menu)
+    assert cache.load() == menu
