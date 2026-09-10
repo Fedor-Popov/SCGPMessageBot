@@ -31,7 +31,15 @@ GOOGLE_SPREADSHEET_IDS=first_sheet_id,second_sheet_id
 GOOGLE_OAUTH_TOKEN_FILE=google-token.json
 ```
 
-The Sheets must have headers named `Dates`/`Date`, `Name`/`Speaker`, `Talk Title`/`Title`, and `Talk Abstract`/`Abstract`. Extra fields such as `Time`, `Location`, and `Link` are optional.
+The Sheets must have headers named `Dates`/`Date`, `Name`/`Speaker`, `Talk Title`/`Title`, and `Talk Abstract`/`Abstract`. Extra fields such as `Time`, `Location`, and `Link` are optional. Column positions may differ between spreadsheets.
+
+For a terminal-only server, the simplest authentication is Google Application Default Credentials. Run this once as the Google account that can read the sheets:
+
+```bash
+gcloud auth application-default login --no-launch-browser
+```
+
+Open the printed URL in a browser, complete the sign-in, and paste the verification code into the terminal. The bot automatically uses the resulting ADC credentials when `google-token.json` is not present. Google stores the credentials in its local configuration directory; do not commit or share that file.
 
 Authorize Sheets on a computer with a browser, not on the terminal-only server:
 
