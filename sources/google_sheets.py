@@ -59,8 +59,6 @@ def parse_rows(rows: list[list[Any]], source: str, default_time: str = "", defau
     for row_number, row in enumerate(rows[1:], start=2):
         if not any(str(value).strip() for value in row):
             continue
-        if not cell(row, "title"):
-            continue
         try:
             events.append(Event(
                 date=_parse_date(cell(row, "date")),

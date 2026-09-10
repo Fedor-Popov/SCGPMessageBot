@@ -113,7 +113,8 @@ def format_talks(talks: Iterable[Event], heading: str) -> str:
         details = " · ".join(
             part for part in (escape(talk.time), speaker, escape(talk.affiliation), escape(talk.location)) if part
         )
-        lines = [f"• <b>{escape(talk.title)}</b>" + (f" ({details})" if details else "")]
+        title = f"<b>{escape(talk.title)}</b>" if talk.title else ""
+        lines = [f"• {title}" + (f" ({details})" if details else "")]
         if talk.description:
             lines.append(f"  {escape(talk.description)}")
         if talk.link:

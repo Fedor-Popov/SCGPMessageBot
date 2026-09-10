@@ -5,6 +5,7 @@ from bot import format_talks, week_start
 from cache import EventCache
 from events import Event
 from website import parse_schedule
+from sources.google_sheets import parse_rows
 
 
 def test_parse_schedule():
@@ -49,3 +50,11 @@ def test_format_talks_uses_html_emphasis():
     assert "<b>A &lt;Talk&gt;</b>" in message
     assert "<i>A Speaker</i>" in message
     assert "</i>)\n\n• <b>Another Talk</b>" in message
+
+
+def test_sheet_rows_keep_missing_title_and_abstract():
+    talks = parse_rows([["Dates", "Name", "Talk Title", "Talk Abstract"], ["09/17/2026", "A Speaker", "", ""]], "test")
+    assert len(talks) == 1
+    assert talks[0].title == ""
+    assert talks[0].description == ""
+    assert "A Speaker" in format_talks(talks, "Talks")
