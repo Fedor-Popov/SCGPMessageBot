@@ -10,7 +10,6 @@ from sources.google_sheets import GoogleSheetsSource
 
 
 HEADERS = ["Title", "Start", "End", "Description", "Location", "Publish", "Event ID"]
-GOOGLE_SHEETS_EPOCH = datetime(1899, 12, 30)
 
 
 def _event_datetime(event: Event) -> datetime:
@@ -25,9 +24,12 @@ def _event_datetime(event: Event) -> datetime:
     return datetime.combine(event.date, parsed_time)
 
 
-def _date_time_value(value: datetime) -> float:
-    """Convert a datetime to Google Sheets' numeric date-time value."""
-    return (value - GOOGLE_SHEETS_EPOCH).total_seconds() / 86400
+def _date_time_formula(value: datetime) -> str:
+    """Build the date-time formula expected by the calendar spreadsheet."""
+    return (
+        f"=DATE({value.year};{value.month};{value.day})"
+        f"+TIME({value.hour};{value.minute};{value.second})"
+    )
 
 
 def _description(event: Event) -> str:
@@ -53,8 +55,8 @@ def rows_for_events(events: list[Event]) -> list[list[object]]:
         end = start + timedelta(hours=1)
         rows.append([
             event.title,
-            _date_time_value(start),
-            _date_time_value(end),
+            _date_time_formula(start),
+            _date_time_formula(end),
             _description(event),
             event.location,
             True,
@@ -86,7 +88,7 @@ class GoogleSheetsCacheWriter:
         service.spreadsheets().values().update(
             spreadsheetId=self.spreadsheet_id,
             range=f"A1:G{len(rows)}",
-            valueInputOption="RAW",
+            valueInputOption="USER_ENTERED",
             body={"values": rows},
         ).execute()
         row_count = sheet_properties["gridProperties"]["rowCount"]

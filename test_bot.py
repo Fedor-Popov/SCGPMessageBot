@@ -1,8 +1,6 @@
 from datetime import date
 from pathlib import Path
 
-import pytest
-
 from bot import format_lunch, format_talks, week_start
 from cache import EventCache
 from events import Event
@@ -89,8 +87,8 @@ def test_sheet_export_requires_title_or_description_and_checks_publish():
     ])
     assert len(rows) == 3
     assert rows[1][0] == "A Talk"
-    assert isinstance(rows[1][1], float)
-    assert rows[1][2] - rows[1][1] == pytest.approx(1 / 24)
+    assert rows[1][1] == "=DATE(2026;9;15)+TIME(14;0;0)"
+    assert rows[1][2] == "=DATE(2026;9;15)+TIME(15;0;0)"
     assert rows[1][5] is True
     assert rows[2][3] == "Abstract: Abstract only"
     assert all(row[0] != "Speaker only" for row in rows[1:])
