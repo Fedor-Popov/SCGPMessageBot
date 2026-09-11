@@ -26,6 +26,15 @@ Current modules:
 - `sources/google_sheets.py` provides the reusable Google Sheets adapter; column positions may differ.
 - `lunch.py` reads and caches the current Lessings Simons Center cafe menu for the `Lunch` button and `/lunch` command. It refreshes every 10 minutes.
 - `cache.py` stores the combined normalized events locally as JSON.
+- `trains.py` reads and caches MTA's LIRR timetable and plans train journeys; `trains_ui.py` supplies the Telegram station selectors.
+
+## LIRR trains
+
+Select **Trains** (or `/trains`), choose **From**, then **To**: Ronkonkoma, Stony Brook, NYC (Penn Station), or Jamaica. Results show departures in the next three hours in New York time, with train numbers, arrival times and any changes. NYC means Penn Station; Grand Central is not included. The same station cannot be selected as both endpoints.
+
+The module uses MTA's [public LIRR GTFS schedule feed](https://www.mta.info/developers), without an API key or new Python dependencies. It downloads the timetable at startup and every six hours, keeping `lirr-schedule.zip` locally (override with `LIRR_CACHE_FILE`). Queries run in the background so the bot remains responsive. During an outage, a valid cached feed up to 48 hours old can be used with a visible notice. An expired timetable reports unavailable rather than an empty schedule.
+
+These are **scheduled times**, not live delay/cancellation predictions. The planner respects service dates, holiday exceptions, after-midnight services, pickup/drop-off restrictions and MTA's station/trip transfer rules. It searches journeys with up to two changes within the same stations and a maximum total duration of six hours, preferring the fastest connection for each initial train and removing slower detours. Results are paginated five journeys at a time, with refresh and new-search buttons. Use the linked MTA TrainTime for live service conditions.
 
 ## Configuration
 

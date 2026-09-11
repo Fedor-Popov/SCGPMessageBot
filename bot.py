@@ -200,6 +200,7 @@ def menu_markup() -> InlineKeyboardMarkup:
             InlineKeyboardButton("Lunch", callback_data="lunch"),
         ],
         [
+            InlineKeyboardButton("Trains", callback_data="trains"),
             InlineKeyboardButton("Help", callback_data="help"),
         ],
         [InlineKeyboardButton("Stop announcements", callback_data="stop")],
@@ -550,7 +551,7 @@ def build_application(settings: Settings) -> Application:
 
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(
-            "Choose a button below, or use /today, /week, /nextweek, /lunch, /add, or /delete. /add and /delete require the password in a private chat. /start subscribes to Monday announcements; /stop unsubscribes; /cancel stops event entry.",
+            "Choose a button below, or use /today, /week, /nextweek, /lunch, /trains, /add, or /delete. /trains shows LIRR departures in the next 3 hours. NYC means Penn Station. /add and /delete require the password in a private chat. /start subscribes to Monday announcements; /stop unsubscribes; /cancel stops event entry.",
             reply_markup=menu_markup(),
         )
 
@@ -579,6 +580,9 @@ def build_application(settings: Settings) -> Application:
     ))
     application.add_handler(CommandHandler("cancel", cancel_add_event))
     application.add_handler(CallbackQueryHandler(delete_added_event_callback, pattern=r"^delete:"))
+    from trains import TrainSchedules
+    from trains_ui import register_trains
+    register_trains(application, TrainSchedules(Path(os.getenv("LIRR_CACHE_FILE", "lirr-schedule.zip"))), menu_markup)
     application.add_handler(CallbackQueryHandler(button_callback))
     if application.job_queue is None:
         raise RuntimeError('Install the job queue extra: pip install "python-telegram-bot[job-queue]"')

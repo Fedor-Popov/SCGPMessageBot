@@ -4,6 +4,7 @@ __pycache__/
 subscribers.json
 talks-cache.json
 lunch-cache.json
+lirr-schedule.zip
 manual-events.json
 google-token.json
 oauth-client.json
