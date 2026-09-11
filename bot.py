@@ -350,11 +350,12 @@ def build_application(settings: Settings) -> Application:
             source=manual_events.name,
         )
         await asyncio.to_thread(manual_events.add, event)
-        # Send the new event to the calendar sheet immediately.  This does not
-        # depend on the slower refresh of the website and input spreadsheets.
-        exported = await sync_events([event])
         await refresh(context, sync_spreadsheet=False)
-        result = "Event saved and added to the calendar." if exported else "Event saved locally, but the calendar export failed."
+        if cache_writer is None:
+            result = "Event saved locally, but the calendar spreadsheet is not configured."
+        else:
+            context.application.create_task(export_cache(context), name="manual-event-calendar-rebuild")
+            result = "Event saved. The calendar spreadsheet rebuild has started and will finish in about 2 minutes."
         await update.effective_message.reply_text(result, reply_markup=menu_markup())
         return ConversationHandler.END
 
@@ -421,7 +422,7 @@ def build_application(settings: Settings) -> Application:
                 return False
             async with spreadsheet_sync_lock:
                 added_count = await asyncio.to_thread(cache_writer.write, events)
-            LOG.info("Checked %d events; appended %d new spreadsheet rows", len(events), added_count)
+            LOG.info("Rebuilt the spreadsheet with %d event rows", added_count)
             return True
         except Exception:
             LOG.exception("Could not sync events to Google Sheets")

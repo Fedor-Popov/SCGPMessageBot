@@ -1,5 +1,6 @@
 from datetime import date
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from bot import format_lunch, format_talks, normalize_event_time, parse_event_date, week_start
 from cache import EventCache
@@ -9,7 +10,7 @@ from sources.google_sheets import parse_rows
 from lunch import LunchCache, LunchItem, LunchMenu
 from sources.bouncing import BouncingSeminarSource
 from sources.manual import ManualEventSource
-from sheets_writer import first_available_row, missing_rows, rows_for_events
+from sheets_writer import GoogleSheetsCacheWriter, rows_for_events
 
 
 def test_parse_schedule():
@@ -95,22 +96,31 @@ def test_sheet_export_requires_title_or_description_and_checks_publish():
     assert all(row[0] != "Speaker only" for row in rows[1:])
 
 
-def test_sheet_export_skips_existing_events_without_removing_rows():
-    first = Event(date(2026, 9, 15), "A Talk", time="2:00 PM", description="Details")
-    second = Event(date(2026, 9, 16), "Another Talk", time="11:00 AM")
-    existing = rows_for_events([first])[1:]
-    assert missing_rows([first, first, second], existing) == rows_for_events([second])[1:]
-
-
-def test_sheet_export_ignores_blank_checkbox_rows_when_placing_events():
-    existing = [
-        ["Title", "Start", "End", "Description", "Location", "Publish", "Event ID"],
-        ["Existing", "start", "end", "", "102", True, ""],
-        ["", "", "", "", "", False, ""],
-        ["", "", "", "", "", False, ""],
-        ["Later event", "later", "end", "", "313", True, ""],
+def test_sheet_writer_unpublishes_clears_and_rebuilds_from_all_events():
+    spreadsheet_api = MagicMock()
+    service = MagicMock()
+    service.spreadsheets.return_value = spreadsheet_api
+    spreadsheet_api.get.return_value.execute.return_value = {
+        "sheets": [{"properties": {"sheetId": 7, "gridProperties": {"rowCount": 1001}}}]
+    }
+    writer = GoogleSheetsCacheWriter("sheet-id", unpublish_delay_seconds=0)
+    writer._source._service = lambda: service
+    events = [
+        Event(date(2026, 9, 15), "First", time="2:00 PM"),
+        Event(date(2026, 9, 16), "Second", time="11:00 AM"),
     ]
-    assert first_available_row(existing, 2) == 3
+
+    assert writer.write(events) == 2
+
+    first_batch = spreadsheet_api.batchUpdate.call_args_list[0].kwargs["body"]
+    publish_cell = first_batch["requests"][0]["repeatCell"]["cell"]
+    assert publish_cell == {"userEnteredValue": {"boolValue": False}}
+    spreadsheet_api.values.return_value.clear.assert_called_once_with(
+        spreadsheetId="sheet-id", range="A:G", body={}
+    )
+    update = spreadsheet_api.values.return_value.update.call_args.kwargs
+    assert update["range"] == "A1:G3"
+    assert update["body"]["values"] == rows_for_events(events)
 
 
 def test_format_lunch():

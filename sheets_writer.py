@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 from datetime import datetime, time, timedelta
+import logging
 from pathlib import Path
+from time import sleep
 
 from events import Event
 from sources.google_sheets import GoogleSheetsSource
 
 
 HEADERS = ["Title", "Start", "End", "Description", "Location", "Publish", "Event ID"]
+UNPUBLISH_DELAY_SECONDS = 120
+LOG = logging.getLogger(__name__)
 
 
 def _event_datetime(event: Event) -> datetime:
@@ -65,87 +69,70 @@ def rows_for_events(events: list[Event]) -> list[list[object]]:
     return rows
 
 
-def _row_identity(row: list[object]) -> tuple[str, str] | None:
-    title = " ".join(str(row[0] if len(row) > 0 else "").casefold().split())
-    start = "".join(str(row[1] if len(row) > 1 else "").casefold().split())
-    description = " ".join(str(row[3] if len(row) > 3 else "").casefold().split())
-    subject = title or description
-    return (subject, start) if subject and start else None
-
-
-def missing_rows(events: list[Event], existing_rows: list[list[object]]) -> list[list[object]]:
-    """Return only cache rows not already present in the spreadsheet."""
-    existing = {identity for row in existing_rows for identity in [_row_identity(row)] if identity}
-    missing = []
-    for row in rows_for_events(events)[1:]:
-        identity = _row_identity(row)
-        if identity is None or identity in existing:
-            continue
-        existing.add(identity)
-        missing.append(row)
-    return missing
-
-
-def first_available_row(existing_rows: list[list[object]], required_rows: int) -> int:
-    """Find a blank block based on event fields, ignoring empty checkbox rows."""
-    if required_rows <= 0:
-        raise ValueError("required_rows must be positive")
-    run_start = 2
-    run_length = 0
-    for row_number, row in enumerate(existing_rows[1:], start=2):
-        has_event_data = any(str(value).strip() for value in row[:5])
-        if has_event_data:
-            run_start = row_number + 1
-            run_length = 0
-            continue
-        if run_length == 0:
-            run_start = row_number
-        run_length += 1
-        if run_length >= required_rows:
-            return run_start
-    return run_start if run_length else max(2, len(existing_rows) + 1)
-
-
 class GoogleSheetsCacheWriter:
-    """Append cache events that are not already in the output sheet."""
+    """Rebuild the output sheet from the complete local event cache."""
 
     name = "google-sheets-cache-export"
 
-    def __init__(self, spreadsheet_id: str, token_file: Path | None = None) -> None:
+    def __init__(
+        self,
+        spreadsheet_id: str,
+        token_file: Path | None = None,
+        unpublish_delay_seconds: int = UNPUBLISH_DELAY_SECONDS,
+    ) -> None:
         self.spreadsheet_id = spreadsheet_id
         self._source = GoogleSheetsSource([], token_file)
+        self.unpublish_delay_seconds = unpublish_delay_seconds
 
     def write(self, events: list[Event]) -> int:
         service = self._source._service()
-        existing_rows = service.spreadsheets().values().get(
-            spreadsheetId=self.spreadsheet_id,
-            range="A1:G",
-            valueRenderOption="FORMULA",
-        ).execute().get("values", [])
-        rows = missing_rows(events, existing_rows[1:] if existing_rows else [])
         metadata = service.spreadsheets().get(
             spreadsheetId=self.spreadsheet_id,
             fields="sheets.properties(sheetId,gridProperties.rowCount)",
         ).execute()
         sheet_properties = metadata["sheets"][0]["properties"]
-        if not existing_rows:
-            service.spreadsheets().values().update(
-                spreadsheetId=self.spreadsheet_id,
-                range="A1:G1",
-                valueInputOption="RAW",
-                body={"values": [HEADERS]},
-            ).execute()
-        if rows:
-            start_row = first_available_row(existing_rows, len(rows))
-            end_row = start_row + len(rows) - 1
-            service.spreadsheets().values().update(
-                spreadsheetId=self.spreadsheet_id,
-                range=f"A{start_row}:G{end_row}",
-                valueInputOption="USER_ENTERED",
-                body={"values": rows},
-            ).execute()
         row_count = sheet_properties["gridProperties"]["rowCount"]
-        formatted_row_count = max(row_count, start_row + len(rows) - 1) if rows else row_count
+        sheet_id = sheet_properties["sheetId"]
+        output_rows = rows_for_events(events)
+
+        if row_count > 1:
+            service.spreadsheets().batchUpdate(
+                spreadsheetId=self.spreadsheet_id,
+                body={
+                    "requests": [{
+                        "repeatCell": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": 1,
+                                "endRowIndex": row_count,
+                                "startColumnIndex": 5,
+                                "endColumnIndex": 6,
+                            },
+                            "cell": {"userEnteredValue": {"boolValue": False}},
+                            "fields": "userEnteredValue",
+                        }
+                    }]
+                },
+            ).execute()
+            LOG.info(
+                "Set Publish=false for the existing calendar sheet; waiting %d seconds before rebuild",
+                self.unpublish_delay_seconds,
+            )
+            sleep(self.unpublish_delay_seconds)
+
+        service.spreadsheets().values().clear(
+            spreadsheetId=self.spreadsheet_id,
+            range="A:G",
+            body={},
+        ).execute()
+        service.spreadsheets().values().update(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"A1:G{len(output_rows)}",
+            valueInputOption="USER_ENTERED",
+            body={"values": output_rows},
+        ).execute()
+
+        formatted_row_count = max(row_count, len(output_rows))
         service.spreadsheets().batchUpdate(
             spreadsheetId=self.spreadsheet_id,
             body={
@@ -153,7 +140,7 @@ class GoogleSheetsCacheWriter:
                     {
                         "repeatCell": {
                             "range": {
-                                "sheetId": sheet_properties["sheetId"],
+                                "sheetId": sheet_id,
                                 "startRowIndex": 1,
                                 "endRowIndex": formatted_row_count,
                                 "startColumnIndex": 1,
@@ -173,7 +160,7 @@ class GoogleSheetsCacheWriter:
                     {
                         "setDataValidation": {
                             "range": {
-                                "sheetId": sheet_properties["sheetId"],
+                                "sheetId": sheet_id,
                                 "startRowIndex": 1,
                                 "endRowIndex": formatted_row_count,
                                 "startColumnIndex": 5,
@@ -189,4 +176,4 @@ class GoogleSheetsCacheWriter:
                 ]
             },
         ).execute()
-        return len(rows)
+        return len(output_rows) - 1
