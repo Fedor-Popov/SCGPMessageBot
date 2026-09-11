@@ -142,8 +142,8 @@ def test_selector_flow_and_result_pagination(tables):
     assert pages == 2 and "Page 1/2" in text and "live delays" in text
     assert "Page 2/2" in format_trains(result, 1)[0]
     assert len(text) < 4096
-    assert {b.text for row in station_buttons().inline_keyboard for b in row} == set(STATIONS.values())
-    assert {b.text for row in station_buttons("nyc").inline_keyboard for b in row} == set(STATIONS.values())
+    assert {b.text for row in station_buttons().inline_keyboard for b in row} == set(STATIONS.values()) | {"Main menu"}
+    assert {b.text for row in station_buttons("nyc").inline_keyboard for b in row} == set(STATIONS.values()) | {"Main menu"}
     assert any(b.text == "Trains" for row in menu_markup().inline_keyboard for b in row)
     app = MagicMock()
     schedules = SimpleNamespace(search=MagicMock(return_value=result))
@@ -166,4 +166,14 @@ def test_selector_flow_and_result_pagination(tables):
                           for b in row if b.text == "Next")
         await callback(update, context)
         assert "Page 2/2" in query.edit_message_text.call_args.args[0]
+        assert any(b.callback_data == "trains:main" for row in query.edit_message_text.call_args.kwargs["reply_markup"].inline_keyboard for b in row)
+        query.data = "trains:to:nyc:jamaica"
+        await callback(update, context)
+        pending = app.create_task.call_args.args[0]
+        query.data = "trains:main"
+        await callback(update, context)
+        assert query.edit_message_text.call_args.kwargs["reply_markup"] == menu_markup()
+        query.edit_message_text.reset_mock()
+        await pending
+        query.edit_message_text.assert_not_awaited()
     asyncio.run(exercise())

@@ -14,15 +14,20 @@ from trains import STATIONS, ScheduleUnavailable, format_trains
 LOG = logging.getLogger(__name__)
 
 
+def main_menu_button():
+    return InlineKeyboardButton("Main menu", callback_data="trains:main")
+
+
 def station_buttons(origin=None):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(label, callback_data=f"trains:from:{key}" if origin is None else f"trains:to:{origin}:{key}")]
         for key, label in STATIONS.items()
-    ])
+    ] + [[main_menu_button()]])
 
 
 def register_trains(application, schedules, menu_markup):
     async def show_menu(update, context):
+        context.user_data.pop("train_lookup", None)
         if update.callback_query:
             await update.callback_query.answer()
         await update.effective_message.reply_text("From:", reply_markup=station_buttons())
@@ -43,11 +48,14 @@ def register_trains(application, schedules, menu_markup):
         rows = [navigation] if navigation else []
         rows.append([InlineKeyboardButton("Refresh times", callback_data=f"trains:to:{result.origin}:{result.destination}")])
         rows.append([InlineKeyboardButton("New train search", callback_data="trains")])
+        rows.append([main_menu_button()])
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(rows), disable_web_page_preview=True)
 
-    async def search(update, context, origin, destination):
+    async def search(update, context, origin, destination, lookup):
         try:
             result = await asyncio.to_thread(schedules.search, origin, destination)
+            if context.user_data.get("train_lookup") != lookup:
+                return
             results = context.user_data.setdefault("train_results", {})
             while len(results) >= 8:
                 results.pop(next(iter(results)))
@@ -55,12 +63,14 @@ def register_trains(application, schedules, menu_markup):
             results[key] = (monotonic(), result)
             await show_page(update.callback_query, context, key, 0)
         except ScheduleUnavailable as exc:
-            await update.callback_query.edit_message_text(str(exc), reply_markup=menu_markup())
+            if context.user_data.get("train_lookup") == lookup:
+                await update.callback_query.edit_message_text(str(exc), reply_markup=menu_markup())
         except TelegramError:
             LOG.warning("Train search message is no longer available")
         except Exception:
             LOG.exception("LIRR schedule lookup failed")
-            await update.callback_query.edit_message_text("Could not retrieve LIRR schedules. Please try again shortly.", reply_markup=menu_markup())
+            if context.user_data.get("train_lookup") == lookup:
+                await update.callback_query.edit_message_text("Could not retrieve LIRR schedules. Please try again shortly.", reply_markup=menu_markup())
 
     async def callback(update, context):
         query = update.callback_query
@@ -69,15 +79,21 @@ def register_trains(application, schedules, menu_markup):
             await show_menu(update, context)
             return
         await query.answer()
-        if len(data) == 3 and data[1] == "from" and data[2] in STATIONS:
+        context.user_data.pop("train_lookup", None)
+        if data == ["trains", "main"]:
+            await query.edit_message_text("Choose an option:", reply_markup=menu_markup())
+        elif len(data) == 3 and data[1] == "from" and data[2] in STATIONS:
             await query.edit_message_text(f"From: {STATIONS[data[2]]}\nTo:", reply_markup=station_buttons(data[2]))
         elif len(data) == 4 and data[1] == "to" and data[2] in STATIONS and data[3] in STATIONS:
             origin, destination = data[2:]
             if origin == destination:
                 await query.edit_message_text("Choose a destination different from your starting station.\nTo:", reply_markup=station_buttons(origin))
                 return
-            await query.edit_message_text(f"Looking up trains: {STATIONS[origin]} → {STATIONS[destination]}…")
-            context.application.create_task(search(update, context, origin, destination), update=update, name="lirr-lookup")
+            lookup = secrets.token_hex(8)
+            context.user_data["train_lookup"] = lookup
+            await query.edit_message_text(f"Looking up trains: {STATIONS[origin]} → {STATIONS[destination]}…",
+                                          reply_markup=InlineKeyboardMarkup([[main_menu_button()]]))
+            context.application.create_task(search(update, context, origin, destination, lookup), update=update, name="lirr-lookup")
         elif len(data) == 4 and data[1] == "page" and data[3].isdigit():
             await show_page(query, context, data[2], int(data[3]))
 
