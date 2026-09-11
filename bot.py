@@ -13,12 +13,14 @@ from pathlib import Path
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
+from access import PasswordAccess
 from cache import EventCache
 from dotenv import load_dotenv
 from events import Event
 from lunch import LessingsLunchSource, LunchCache, LunchMenu
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
+from telegram.error import TelegramError
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -32,6 +34,7 @@ from telegram.ext import (
 LOG = logging.getLogger(__name__)
 load_dotenv()
 ADD_DATE, ADD_TITLE, ADD_SPEAKER, ADD_ABSTRACT, ADD_TIME, ADD_LOCATION = range(6)
+ADD_PASSWORD, DELETE_PASSWORD = range(6, 8)
 
 
 @dataclass(frozen=True)
@@ -227,6 +230,7 @@ def build_application(settings: Settings) -> Application:
     from sources.manual import ManualEventSource
 
     manual_events = ManualEventSource(settings.manual_events_file)
+    password_access = PasswordAccess()
     sources = [ThermalSeminarsSource(settings.website_url), BouncingSeminarSource(), manual_events]
     lunch_source = LessingsLunchSource(settings.lunch_menu_url)
     lunch_cache = LunchCache(settings.lunch_cache_file)
@@ -236,7 +240,7 @@ def build_application(settings: Settings) -> Application:
         sources.append(JournalClubSource(list(settings.journal_club_spreadsheet_ids), settings.google_token_file))
     if settings.thermal_spreadsheet_ids:
         from sources.google_sheets import GoogleSheetsSource
-        sources.append(GoogleSheetsSource(list(settings.thermal_spreadsheet_ids), settings.google_token_file, default_time="2:00 PM", default_location="102", source_name="thermal-seminar-sheet"))
+        sources.append(GoogleSheetsSource(list(settings.thermal_spreadsheet_ids), settings.google_token_file, default_time=ThermalSeminarsSource.default_time, default_location=ThermalSeminarsSource.default_location, source_name="thermal-seminar-sheet"))
     if settings.additional_spreadsheet_ids:
         from sources.google_sheets import GoogleSheetsSource
         sources.append(GoogleSheetsSource(list(settings.additional_spreadsheet_ids), settings.google_token_file, source_name="additional-google-sheet"))
@@ -287,14 +291,47 @@ def build_application(settings: Settings) -> Application:
             parse_mode=ParseMode.HTML,
         )
 
+    async def password_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, state: int) -> int:
+        password_access.revoke(update.effective_user.id, update.effective_chat.id)
+        context.user_data.pop("new_event", None)
+        if update.effective_chat.type != "private":
+            await update.effective_message.reply_text("Please use this command in a private chat with the bot.")
+            return ConversationHandler.END
+        await update.effective_message.reply_text("Enter the password, or /cancel to stop.")
+        return state
+
     async def add_event_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        if update.callback_query:
-            await update.callback_query.answer()
+        return await password_prompt(update, context, ADD_PASSWORD)
+
+    async def delete_event_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        return await password_prompt(update, context, DELETE_PASSWORD)
+
+    async def accept_password(update: Update, context: ContextTypes.DEFAULT_TYPE, action: str) -> str | None:
+        password = update.effective_message.text or ""
+        try:
+            await update.effective_message.delete()
+        except TelegramError:
+            pass
+        try:
+            return password_access.authenticate(update.effective_user.id, update.effective_chat.id, action, password)
+        except ValueError as exc:
+            await update.effective_message.reply_text(str(exc))
+            return None
+
+    async def add_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        if await accept_password(update, context, "add") is None:
+            return ConversationHandler.END
         context.user_data["new_event"] = {}
         await update.effective_message.reply_text(
             "Enter the event date (YYYY-MM-DD or MM/DD/YYYY). Send /cancel to stop."
         )
         return ADD_DATE
+
+    async def delete_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        nonce = await accept_password(update, context, "delete")
+        if nonce is not None:
+            await delete_added_event(update, context, nonce)
+        return ConversationHandler.END
 
     async def add_event_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         try:
@@ -333,6 +370,10 @@ def build_application(settings: Settings) -> Application:
 
     async def add_event_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         data = context.user_data.pop("new_event", {})
+        if not password_access.allowed(update.effective_user.id, update.effective_chat.id, "add"):
+            await update.effective_message.reply_text("Authorization expired. Use /add again.")
+            return ConversationHandler.END
+        password_access.revoke(update.effective_user.id, update.effective_chat.id)
         data["location"] = optional_field(update.effective_message.text or "")
         if not data.get("title") and not data.get("description"):
             await update.effective_message.reply_text(
@@ -360,11 +401,12 @@ def build_application(settings: Settings) -> Application:
         return ConversationHandler.END
 
     async def cancel_add_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        password_access.revoke(update.effective_user.id, update.effective_chat.id)
         context.user_data.pop("new_event", None)
         await update.effective_message.reply_text("Event entry cancelled.", reply_markup=menu_markup())
         return ConversationHandler.END
 
-    async def delete_added_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def delete_added_event(update: Update, context: ContextTypes.DEFAULT_TYPE, nonce: str) -> None:
         today_date = datetime.now(timezone).date()
         future_events = [event for event in manual_events.fetch() if event.date >= today_date]
         if not future_events:
@@ -382,7 +424,7 @@ def build_application(settings: Settings) -> Application:
             buttons.append([
                 InlineKeyboardButton(
                     label,
-                    callback_data=f"deleteadd:{manual_events.event_id(event)}",
+                    callback_data=f"delete:{nonce}:{manual_events.event_id(event)}",
                 )
             ])
         await update.effective_message.reply_text(
@@ -394,8 +436,20 @@ def build_application(settings: Settings) -> Application:
         query = update.callback_query
         if query is None:
             return
+        parts = (query.data or "").split(":")
+        if len(parts) != 3 or not password_access.allowed(
+            update.effective_user.id, update.effective_chat.id, "delete", parts[1]
+        ):
+            await query.answer("Authorization expired. Use /delete and enter the password again.", show_alert=True)
+            return
+        event_id = parts[2]
+        eligible = any(manual_events.event_id(event) == event_id and event.date >= datetime.now(timezone).date()
+                       for event in manual_events.fetch())
+        if not eligible:
+            await query.answer("That event is no longer available for deletion.", show_alert=True)
+            return
+        password_access.revoke(update.effective_user.id, update.effective_chat.id)
         await query.answer()
-        event_id = (query.data or "").partition(":")[2]
         deleted = await asyncio.to_thread(manual_events.delete, event_id)
         if deleted is None:
             await query.edit_message_text(
@@ -496,7 +550,7 @@ def build_application(settings: Settings) -> Application:
 
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(
-            "Choose a button below, or use /today, /week, /nextweek, /lunch, /add, or /deleteadd. /start subscribes to Monday announcements; /stop unsubscribes; /cancel stops event entry.",
+            "Choose a button below, or use /today, /week, /nextweek, /lunch, /add, or /delete. /add and /delete require the password in a private chat. /start subscribes to Monday announcements; /stop unsubscribes; /cancel stops event entry.",
             reply_markup=menu_markup(),
         )
 
@@ -507,11 +561,13 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("week", week))
     application.add_handler(CommandHandler("nextweek", nextweek))
     application.add_handler(CommandHandler("lunch", lunch))
-    application.add_handler(CommandHandler("deleteadd", delete_added_event))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(ConversationHandler(
-        entry_points=[CommandHandler("add", add_event_start)],
+        entry_points=[CommandHandler("add", add_event_start), CommandHandler("delete", delete_event_start)],
+        allow_reentry=True,
         states={
+            ADD_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_password)],
+            DELETE_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, delete_password)],
             ADD_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_event_date)],
             ADD_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_event_title)],
             ADD_SPEAKER: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_event_speaker)],
@@ -521,7 +577,8 @@ def build_application(settings: Settings) -> Application:
         },
         fallbacks=[CommandHandler("cancel", cancel_add_event)],
     ))
-    application.add_handler(CallbackQueryHandler(delete_added_event_callback, pattern=r"^deleteadd:"))
+    application.add_handler(CommandHandler("cancel", cancel_add_event))
+    application.add_handler(CallbackQueryHandler(delete_added_event_callback, pattern=r"^delete:"))
     application.add_handler(CallbackQueryHandler(button_callback))
     if application.job_queue is None:
         raise RuntimeError('Install the job queue extra: pip install "python-telegram-bot[job-queue]"')

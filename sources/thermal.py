@@ -7,7 +7,7 @@ class ThermalSeminarsSource(WebsiteTalkSource):
     """Standard EventSource adapter for the Thermal Seminars website."""
 
     name = "thermal"
-    default_time = "2:00 PM"
+    default_time = "11:00 AM"
     default_location = "102"
 
     def fetch(self):

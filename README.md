@@ -18,7 +18,7 @@ To add another event series, create `sources/my_event.py` with a class implement
 
 Current modules:
 
-- `sources/thermal.py` reads the public Thermal Seminars website.
+- `sources/thermal.py` reads the public Thermal Seminars website and supplies the default 11:00 AM / room 102 metadata, also used for Thermal Seminar sheets.
 - `sources/wednesday.py` reads Wednesday Seminar sheets and supplies the default 2:00 PM / room 313 metadata.
 - `sources/journal_club.py` reads Journal Club sheets and supplies the default 2:00 PM / Common Room metadata.
 - `sources/bouncing.py` adds a recurring Bouncing Seminar every Friday at 11:00 AM in the Common Room.
@@ -72,4 +72,6 @@ uv run python bot.py
 
 The bot refreshes immediately at startup and then every `REFRESH_INTERVAL_HOURS` (one hour by default). The Monday announcement is sent at `ANNOUNCEMENT_HOUR` in `BOT_TIMEZONE`.
 
-The `/add` command asks for date, title, speaker, abstract, time, and location. Enter `-` for an optional blank field or `/cancel` to stop. Manual events are saved in `manual-events.json`, merged into the local cache, and then trigger a background rebuild of the output spreadsheet. The bot replies immediately; the spreadsheet rebuild finishes after the required two-minute unpublished period. `/deleteadd` displays one button for every future manual event; selecting one removes it from `manual-events.json`, refreshes the local cache, and triggers another background spreadsheet rebuild. Events obtained from website or Google Sheets modules cannot be deleted with this command. Every hourly source refresh also rebuilds the output spreadsheet. The startup and daily 1:00 AM rebuilds remain as safeguards. Recurring Bouncing Seminar entries end before October 1, 2026.
+Use `/add` or `/delete` in a private chat with the bot and enter the password when prompted. Only a salted scrypt hash is stored in `access.py`; entered passwords are hashed and compared with `hmac.compare_digest`. The bot attempts to delete the password message. Authorization lasts 15 minutes and permits one operation. Five incorrect attempts temporarily block further attempts for that user for five minutes. `/cancel` revokes authorization; each new command requires the password again.
+
+After authentication, `/add` asks for date, title, speaker, abstract, time, and location. Enter `-` for an optional blank field or `/cancel` to stop. Manual events are saved in `manual-events.json`, merged into the local cache, and then trigger a background rebuild of the output spreadsheet. The spreadsheet rebuild finishes after the required two-minute unpublished period. `/delete` displays one button for every manual event dated today or later; selecting one removes it from `manual-events.json`, refreshes the local cache, and triggers another background spreadsheet rebuild. The buttons are tied to the authenticated user and expire with the authorization. Events obtained from website or Google Sheets modules cannot be deleted with this command. Every hourly source refresh also rebuilds the output spreadsheet. The startup and daily 1:00 AM rebuilds remain as safeguards. Recurring Bouncing Seminar entries end before October 1, 2026.
