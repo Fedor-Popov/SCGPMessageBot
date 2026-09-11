@@ -9,7 +9,7 @@ from sources.google_sheets import parse_rows
 from lunch import LunchCache, LunchItem, LunchMenu
 from sources.bouncing import BouncingSeminarSource
 from sources.manual import ManualEventSource
-from sheets_writer import missing_rows, rows_for_events
+from sheets_writer import first_available_row, missing_rows, rows_for_events
 
 
 def test_parse_schedule():
@@ -100,6 +100,17 @@ def test_sheet_export_skips_existing_events_without_removing_rows():
     second = Event(date(2026, 9, 16), "Another Talk", time="11:00 AM")
     existing = rows_for_events([first])[1:]
     assert missing_rows([first, first, second], existing) == rows_for_events([second])[1:]
+
+
+def test_sheet_export_ignores_blank_checkbox_rows_when_placing_events():
+    existing = [
+        ["Title", "Start", "End", "Description", "Location", "Publish", "Event ID"],
+        ["Existing", "start", "end", "", "102", True, ""],
+        ["", "", "", "", "", False, ""],
+        ["", "", "", "", "", False, ""],
+        ["Later event", "later", "end", "", "313", True, ""],
+    ]
+    assert first_available_row(existing, 2) == 3
 
 
 def test_format_lunch():

@@ -86,6 +86,26 @@ def missing_rows(events: list[Event], existing_rows: list[list[object]]) -> list
     return missing
 
 
+def first_available_row(existing_rows: list[list[object]], required_rows: int) -> int:
+    """Find a blank block based on event fields, ignoring empty checkbox rows."""
+    if required_rows <= 0:
+        raise ValueError("required_rows must be positive")
+    run_start = 2
+    run_length = 0
+    for row_number, row in enumerate(existing_rows[1:], start=2):
+        has_event_data = any(str(value).strip() for value in row[:5])
+        if has_event_data:
+            run_start = row_number + 1
+            run_length = 0
+            continue
+        if run_length == 0:
+            run_start = row_number
+        run_length += 1
+        if run_length >= required_rows:
+            return run_start
+    return run_start if run_length else max(2, len(existing_rows) + 1)
+
+
 class GoogleSheetsCacheWriter:
     """Append cache events that are not already in the output sheet."""
 
@@ -116,14 +136,16 @@ class GoogleSheetsCacheWriter:
                 body={"values": [HEADERS]},
             ).execute()
         if rows:
-            service.spreadsheets().values().append(
+            start_row = first_available_row(existing_rows, len(rows))
+            end_row = start_row + len(rows) - 1
+            service.spreadsheets().values().update(
                 spreadsheetId=self.spreadsheet_id,
-                range="A:G",
+                range=f"A{start_row}:G{end_row}",
                 valueInputOption="USER_ENTERED",
-                insertDataOption="INSERT_ROWS",
                 body={"values": rows},
             ).execute()
         row_count = sheet_properties["gridProperties"]["rowCount"]
+        formatted_row_count = max(row_count, start_row + len(rows) - 1) if rows else row_count
         service.spreadsheets().batchUpdate(
             spreadsheetId=self.spreadsheet_id,
             body={
@@ -133,7 +155,7 @@ class GoogleSheetsCacheWriter:
                             "range": {
                                 "sheetId": sheet_properties["sheetId"],
                                 "startRowIndex": 1,
-                                "endRowIndex": row_count,
+                                "endRowIndex": formatted_row_count,
                                 "startColumnIndex": 1,
                                 "endColumnIndex": 3,
                             },
@@ -153,7 +175,7 @@ class GoogleSheetsCacheWriter:
                             "range": {
                                 "sheetId": sheet_properties["sheetId"],
                                 "startRowIndex": 1,
-                                "endRowIndex": row_count,
+                                "endRowIndex": formatted_row_count,
                                 "startColumnIndex": 5,
                                 "endColumnIndex": 6,
                             },
