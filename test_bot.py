@@ -9,7 +9,7 @@ from sources.google_sheets import parse_rows
 from lunch import LunchCache, LunchItem, LunchMenu
 from sources.bouncing import BouncingSeminarSource
 from sources.manual import ManualEventSource
-from sheets_writer import rows_for_events
+from sheets_writer import missing_rows, rows_for_events
 
 
 def test_parse_schedule():
@@ -93,6 +93,13 @@ def test_sheet_export_requires_title_or_description_and_checks_publish():
     assert rows[1][5] is True
     assert rows[2][3] == "Abstract: Abstract only"
     assert all(row[0] != "Speaker only" for row in rows[1:])
+
+
+def test_sheet_export_skips_existing_events_without_removing_rows():
+    first = Event(date(2026, 9, 15), "A Talk", time="2:00 PM", description="Details")
+    second = Event(date(2026, 9, 16), "Another Talk", time="11:00 AM")
+    existing = rows_for_events([first])[1:]
+    assert missing_rows([first, first, second], existing) == rows_for_events([second])[1:]
 
 
 def test_format_lunch():

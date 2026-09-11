@@ -65,8 +65,29 @@ def rows_for_events(events: list[Event]) -> list[list[object]]:
     return rows
 
 
+def _row_identity(row: list[object]) -> tuple[str, str] | None:
+    title = " ".join(str(row[0] if len(row) > 0 else "").casefold().split())
+    start = "".join(str(row[1] if len(row) > 1 else "").casefold().split())
+    description = " ".join(str(row[3] if len(row) > 3 else "").casefold().split())
+    subject = title or description
+    return (subject, start) if subject and start else None
+
+
+def missing_rows(events: list[Event], existing_rows: list[list[object]]) -> list[list[object]]:
+    """Return only cache rows not already present in the spreadsheet."""
+    existing = {identity for row in existing_rows for identity in [_row_identity(row)] if identity}
+    missing = []
+    for row in rows_for_events(events)[1:]:
+        identity = _row_identity(row)
+        if identity is None or identity in existing:
+            continue
+        existing.add(identity)
+        missing.append(row)
+    return missing
+
+
 class GoogleSheetsCacheWriter:
-    """Replace the output sheet's rows with the current local cache."""
+    """Append cache events that are not already in the output sheet."""
 
     name = "google-sheets-cache-export"
 
@@ -74,23 +95,34 @@ class GoogleSheetsCacheWriter:
         self.spreadsheet_id = spreadsheet_id
         self._source = GoogleSheetsSource([], token_file)
 
-    def write(self, events: list[Event]) -> None:
+    def write(self, events: list[Event]) -> int:
         service = self._source._service()
-        rows = rows_for_events(events)
+        existing_rows = service.spreadsheets().values().get(
+            spreadsheetId=self.spreadsheet_id,
+            range="A1:G",
+            valueRenderOption="FORMULA",
+        ).execute().get("values", [])
+        rows = missing_rows(events, existing_rows[1:] if existing_rows else [])
         metadata = service.spreadsheets().get(
             spreadsheetId=self.spreadsheet_id,
             fields="sheets.properties(sheetId,gridProperties.rowCount)",
         ).execute()
         sheet_properties = metadata["sheets"][0]["properties"]
-        service.spreadsheets().values().clear(
-            spreadsheetId=self.spreadsheet_id, range="A2:G"
-        ).execute()
-        service.spreadsheets().values().update(
-            spreadsheetId=self.spreadsheet_id,
-            range=f"A1:G{len(rows)}",
-            valueInputOption="USER_ENTERED",
-            body={"values": rows},
-        ).execute()
+        if not existing_rows:
+            service.spreadsheets().values().update(
+                spreadsheetId=self.spreadsheet_id,
+                range="A1:G1",
+                valueInputOption="RAW",
+                body={"values": [HEADERS]},
+            ).execute()
+        if rows:
+            service.spreadsheets().values().append(
+                spreadsheetId=self.spreadsheet_id,
+                range="A:G",
+                valueInputOption="USER_ENTERED",
+                insertDataOption="INSERT_ROWS",
+                body={"values": rows},
+            ).execute()
         row_count = sheet_properties["gridProperties"]["rowCount"]
         service.spreadsheets().batchUpdate(
             spreadsheetId=self.spreadsheet_id,
@@ -135,3 +167,4 @@ class GoogleSheetsCacheWriter:
                 ]
             },
         ).execute()
+        return len(rows)

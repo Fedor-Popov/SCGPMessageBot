@@ -198,7 +198,6 @@ def menu_markup() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton("Help", callback_data="help"),
-            InlineKeyboardButton("Add to calendar", callback_data="add_event"),
         ],
         [InlineKeyboardButton("Stop announcements", callback_data="stop")],
     ])
@@ -415,8 +414,8 @@ def build_application(settings: Settings) -> Application:
             if not cached_events:
                 LOG.warning("Talks cache is empty; skipping Google Sheets export")
                 return False
-            await asyncio.to_thread(cache_writer.write, cached_events)
-            LOG.info("Exported %d cached events to spreadsheet", len(cached_events))
+            added_count = await asyncio.to_thread(cache_writer.write, cached_events)
+            LOG.info("Checked %d cached events; appended %d new spreadsheet rows", len(cached_events), added_count)
             return True
         except Exception:
             LOG.exception("Could not export talks cache to Google Sheets")
@@ -455,10 +454,7 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("lunch", lunch))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(add_event_start, pattern="^add_event$"),
-            CommandHandler("add", add_event_start),
-        ],
+        entry_points=[CommandHandler("add", add_event_start)],
         states={
             ADD_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_event_date)],
             ADD_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_event_title)],

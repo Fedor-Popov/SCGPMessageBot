@@ -22,7 +22,7 @@ Current modules:
 - `sources/wednesday.py` reads Wednesday Seminar sheets and supplies the default 2:00 PM / room 313 metadata.
 - `sources/journal_club.py` reads Journal Club sheets and supplies the default 2:00 PM / Common Room metadata.
 - `sources/bouncing.py` adds a recurring Bouncing Seminar every Friday at 11:00 AM in the Common Room.
-- `sources/manual.py` persists events entered through the `Add to calendar` button or `/add` command.
+- `sources/manual.py` persists events entered through the `/add` command.
 - `sources/google_sheets.py` provides the reusable Google Sheets adapter; column positions may differ.
 - `lunch.py` reads and caches the current Lessings Simons Center cafe menu for the `Lunch` button and `/lunch` command. It refreshes every 10 minutes.
 - `cache.py` stores the combined normalized events locally as JSON.
@@ -42,7 +42,7 @@ GOOGLE_OAUTH_TOKEN_FILE=google-token.json
 
 The Sheets can use headers named `Dates`/`Date`, `Name`/`Speaker`, `Talk Title`/`Title`, and `Talk Abstract`/`Abstract`. Calendar-style sheets using `Title`, `Start`, `Description`, `Location`, and optional `Publish` are also supported. In that format, `Speaker:`, `Title:`, and `Abstract:` may be placed on separate lines in `Description`. Column positions may differ between spreadsheets.
 
-Use `GOOGLE_ADDITIONAL_SPREADSHEET_IDS` for additional input sheets. Set `GOOGLE_CACHE_EXPORT_SPREADSHEET_ID` to a Google Calendar-style output sheet to replace its rows with `talks-cache.json` at startup and every day at 1:00 AM. Events are exported only when a title or description is present. `Start` and `End` use formulas such as `=DATE(2026;9;11)+TIME(11;0;0)`, and `Publish` is written as a checked checkbox. For backward compatibility, if the export variable is empty, the first additional spreadsheet ID is used as the output sheet.
+Use `GOOGLE_ADDITIONAL_SPREADSHEET_IDS` for additional input sheets. Set `GOOGLE_CACHE_EXPORT_SPREADSHEET_ID` to a Google Calendar-style output sheet. At startup and every day at 1:00 AM, the bot appends cache events that are not already present; it never removes existing rows. Events are matched by title (or description when the title is blank) and start date-time. Events are exported only when a title or description is present. `Start` and `End` use formulas such as `=DATE(2026;9;11)+TIME(11;0;0)`, and `Publish` is written as a checked checkbox. For backward compatibility, if the export variable is empty, the first additional spreadsheet ID is used as the output sheet.
 
 For a terminal-only server, the simplest authentication is Google Application Default Credentials. Run this once as the Google account that can read the sheets:
 
@@ -72,4 +72,4 @@ uv run python bot.py
 
 The bot refreshes immediately at startup and then every `REFRESH_INTERVAL_HOURS` (one hour by default). The Monday announcement is sent at `ANNOUNCEMENT_HOUR` in `BOT_TIMEZONE`.
 
-The `Add to calendar` button asks for date, title, speaker, abstract, time, and location. Enter `-` for an optional blank field or `/cancel` to stop. Manual events are saved in `manual-events.json`, merged into the cache, and exported immediately. Recurring Bouncing Seminar entries end before October 1, 2026.
+The `/add` command asks for date, title, speaker, abstract, time, and location. Enter `-` for an optional blank field or `/cancel` to stop. Manual events are saved in `manual-events.json`, merged into the cache, and exported immediately. Recurring Bouncing Seminar entries end before October 1, 2026.
