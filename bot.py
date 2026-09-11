@@ -245,6 +245,7 @@ def build_application(settings: Settings) -> Application:
     if settings.cache_export_spreadsheet_id:
         from sheets_writer import GoogleSheetsCacheWriter
         cache_writer = GoogleSheetsCacheWriter(settings.cache_export_spreadsheet_id, settings.google_token_file)
+    spreadsheet_sync_lock = asyncio.Lock()
     subscribers = SubscriberStore(settings.subscribers_file)
     timezone = ZoneInfo(settings.timezone)
 
@@ -349,8 +350,10 @@ def build_application(settings: Settings) -> Application:
             source=manual_events.name,
         )
         await asyncio.to_thread(manual_events.add, event)
-        await refresh(context)
-        exported = await export_cache(context)
+        # Send the new event to the calendar sheet immediately.  This does not
+        # depend on the slower refresh of the website and input spreadsheets.
+        exported = await sync_events([event])
+        await refresh(context, sync_spreadsheet=False)
         result = "Event saved and added to the calendar." if exported else "Event saved locally, but the calendar export failed."
         await update.effective_message.reply_text(result, reply_markup=menu_markup())
         return ConversationHandler.END
@@ -390,7 +393,7 @@ def build_application(settings: Settings) -> Application:
         if handler:
             await handler(update, context)
 
-    async def refresh(context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def refresh(context: ContextTypes.DEFAULT_TYPE, *, sync_spreadsheet: bool = True) -> None:
         try:
             events: list[Event] = []
             for source in sources:
@@ -401,29 +404,31 @@ def build_application(settings: Settings) -> Application:
             if not events:
                 raise RuntimeError("All event sources failed or returned no events")
             unique = {(event.date, event.title.lower(), event.speaker.lower()): event for event in events}
-            cache.save(sorted(unique.values(), key=lambda event: (event.date, event.title.lower())))
+            cached_events = sorted(unique.values(), key=lambda event: (event.date, event.title.lower()))
+            cache.save(cached_events)
             LOG.info("Refreshed %d events from %d sources into %s", len(unique), len(sources), settings.cache_file)
+            if sync_spreadsheet:
+                await sync_events(cached_events)
         except Exception:
             LOG.exception("Weekly seminar refresh failed; retaining existing cache")
 
-    async def export_cache(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    async def sync_events(events: list[Event]) -> bool:
         if cache_writer is None:
             return False
         try:
-            cached_events = cache.load()
-            if not cached_events:
-                LOG.warning("Talks cache is empty; skipping Google Sheets export")
+            if not events:
+                LOG.warning("No events supplied; skipping Google Sheets export")
                 return False
-            added_count = await asyncio.to_thread(cache_writer.write, cached_events)
-            LOG.info("Checked %d cached events; appended %d new spreadsheet rows", len(cached_events), added_count)
+            async with spreadsheet_sync_lock:
+                added_count = await asyncio.to_thread(cache_writer.write, events)
+            LOG.info("Checked %d events; appended %d new spreadsheet rows", len(events), added_count)
             return True
         except Exception:
-            LOG.exception("Could not export talks cache to Google Sheets")
+            LOG.exception("Could not sync events to Google Sheets")
             return False
 
-    async def initial_refresh_and_export(context: ContextTypes.DEFAULT_TYPE) -> None:
-        await refresh(context)
-        await export_cache(context)
+    async def export_cache(context: ContextTypes.DEFAULT_TYPE) -> bool:
+        return await sync_events(cache.load())
 
     async def weekly_announcement(context: ContextTypes.DEFAULT_TYPE) -> None:
         today_date = datetime.now(timezone).date()
@@ -484,7 +489,7 @@ def build_application(settings: Settings) -> Application:
     application.job_queue.run_daily(export_cache, time=time(1, 0, tzinfo=timezone), name="daily-cache-export")
     # Refresh once at every startup so newly configured sources are included
     # immediately; the regular Saturday job keeps the cache current afterward.
-    application.job_queue.run_once(initial_refresh_and_export, when=timedelta(seconds=1), name="initial-refresh-and-export")
+    application.job_queue.run_once(refresh, when=timedelta(seconds=1), name="initial-refresh-and-export")
     return application
 
 
