@@ -159,6 +159,18 @@ def test_manual_event_source_persists_and_replaces_duplicates(tmp_path: Path):
     )]
 
 
+def test_manual_event_source_deletes_only_selected_event(tmp_path: Path):
+    source = ManualEventSource(tmp_path / "manual.json")
+    first = Event(date(2026, 9, 20), "First", speaker="Alice")
+    second = Event(date(2026, 9, 21), "Second", speaker="Bob")
+    source.add(first)
+    source.add(second)
+
+    assert source.delete(source.event_id(first)) == first
+    assert source.fetch() == [second]
+    assert source.delete(source.event_id(first)) is None
+
+
 def test_manual_event_date_and_time_parsing():
     assert parse_event_date("09/20/2026") == date(2026, 9, 20)
     assert parse_event_date("09/20", date(2026, 1, 1)) == date(2026, 9, 20)

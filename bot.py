@@ -364,6 +364,55 @@ def build_application(settings: Settings) -> Application:
         await update.effective_message.reply_text("Event entry cancelled.", reply_markup=menu_markup())
         return ConversationHandler.END
 
+    async def delete_added_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        today_date = datetime.now(timezone).date()
+        future_events = [event for event in manual_events.fetch() if event.date >= today_date]
+        if not future_events:
+            await update.effective_message.reply_text(
+                "There are no future events created with /add.",
+                reply_markup=menu_markup(),
+            )
+            return
+        buttons = []
+        for event in sorted(future_events, key=lambda item: (item.date, item.time, item.title.casefold())):
+            subject = event.title or event.description or event.speaker or "Untitled event"
+            label = f"{event.date:%b %d} · {subject}"
+            if len(label) > 60:
+                label = label[:57].rstrip() + "…"
+            buttons.append([
+                InlineKeyboardButton(
+                    label,
+                    callback_data=f"deleteadd:{manual_events.event_id(event)}",
+                )
+            ])
+        await update.effective_message.reply_text(
+            "Choose a future event added with /add to delete:",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+
+    async def delete_added_event_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if query is None:
+            return
+        await query.answer()
+        event_id = (query.data or "").partition(":")[2]
+        deleted = await asyncio.to_thread(manual_events.delete, event_id)
+        if deleted is None:
+            await query.edit_message_text(
+                "That event was already deleted or is no longer available.",
+                reply_markup=menu_markup(),
+            )
+            return
+
+        await refresh(context, sync_spreadsheet=False)
+        subject = deleted.title or deleted.description or deleted.speaker or "Untitled event"
+        if cache_writer is None:
+            result = f"Deleted {subject}. The calendar spreadsheet is not configured."
+        else:
+            context.application.create_task(export_cache(context), name="manual-event-deletion-calendar-rebuild")
+            result = f"Deleted {subject}. The calendar spreadsheet rebuild will finish in about 2 minutes."
+        await query.edit_message_text(result, reply_markup=menu_markup())
+
     async def refresh_lunch(context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             menu = await asyncio.to_thread(lunch_source.fetch)
@@ -447,7 +496,7 @@ def build_application(settings: Settings) -> Application:
 
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(
-            "Choose a button below, or use /today, /week, /nextweek, /lunch, or /add. /start subscribes to Monday announcements; /stop unsubscribes; /cancel stops event entry.",
+            "Choose a button below, or use /today, /week, /nextweek, /lunch, /add, or /deleteadd. /start subscribes to Monday announcements; /stop unsubscribes; /cancel stops event entry.",
             reply_markup=menu_markup(),
         )
 
@@ -458,6 +507,7 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("week", week))
     application.add_handler(CommandHandler("nextweek", nextweek))
     application.add_handler(CommandHandler("lunch", lunch))
+    application.add_handler(CommandHandler("deleteadd", delete_added_event))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(ConversationHandler(
         entry_points=[CommandHandler("add", add_event_start)],
@@ -471,6 +521,7 @@ def build_application(settings: Settings) -> Application:
         },
         fallbacks=[CommandHandler("cancel", cancel_add_event)],
     ))
+    application.add_handler(CallbackQueryHandler(delete_added_event_callback, pattern=r"^deleteadd:"))
     application.add_handler(CallbackQueryHandler(button_callback))
     if application.job_queue is None:
         raise RuntimeError('Install the job queue extra: pip install "python-telegram-bot[job-queue]"')
