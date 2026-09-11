@@ -22,6 +22,7 @@ Current modules:
 - `sources/wednesday.py` reads Wednesday Seminar sheets and supplies the default 2:00 PM / room 313 metadata.
 - `sources/journal_club.py` reads Journal Club sheets and supplies the default 2:00 PM / Common Room metadata.
 - `sources/bouncing.py` adds a recurring Bouncing Seminar every Friday at 11:00 AM in the Common Room.
+- `sources/manual.py` persists events entered through the `Add to calendar` button or `/add` command.
 - `sources/google_sheets.py` provides the reusable Google Sheets adapter; column positions may differ.
 - `lunch.py` reads and caches the current Lessings Simons Center cafe menu for the `Lunch` button and `/lunch` command. It refreshes every 10 minutes.
 - `cache.py` stores the combined normalized events locally as JSON.
@@ -70,3 +71,5 @@ uv run python bot.py
 ```
 
 The bot refreshes immediately at startup and then every `REFRESH_INTERVAL_HOURS` (one hour by default). The Monday announcement is sent at `ANNOUNCEMENT_HOUR` in `BOT_TIMEZONE`.
+
+The `Add to calendar` button asks for date, title, speaker, abstract, time, and location. Enter `-` for an optional blank field or `/cancel` to stop. Manual events are saved in `manual-events.json`, merged into the cache, and exported immediately. Recurring Bouncing Seminar entries end before October 1, 2026.

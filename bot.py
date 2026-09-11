@@ -19,10 +19,19 @@ from events import Event
 from lunch import LessingsLunchSource, LunchCache, LunchMenu
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+)
 
 LOG = logging.getLogger(__name__)
 load_dotenv()
+ADD_DATE, ADD_TITLE, ADD_SPEAKER, ADD_ABSTRACT, ADD_TIME, ADD_LOCATION = range(6)
 
 
 @dataclass(frozen=True)
@@ -32,6 +41,7 @@ class Settings:
     lunch_menu_url: str
     lunch_cache_file: Path
     cache_file: Path
+    manual_events_file: Path
     google_spreadsheet_ids: tuple[str, ...]
     wednesday_spreadsheet_ids: tuple[str, ...]
     journal_club_spreadsheet_ids: tuple[str, ...]
@@ -66,6 +76,7 @@ class Settings:
             lunch_menu_url=os.getenv("LUNCH_MENU_URL", "https://www.lessings.com/my/lfsm/weekly-menu/simons-center"),
             lunch_cache_file=Path(os.getenv("LUNCH_CACHE_FILE", "lunch-cache.json")),
             cache_file=Path(os.getenv("TALKS_CACHE_FILE", "talks-cache.json")),
+            manual_events_file=Path(os.getenv("MANUAL_EVENTS_FILE", "manual-events.json")),
             google_spreadsheet_ids=spreadsheet_ids,
             wednesday_spreadsheet_ids=wednesday_ids,
             journal_club_spreadsheet_ids=journal_ids,
@@ -146,6 +157,35 @@ def display_date(value: date, include_weekday: bool = False) -> str:
     return f"{value:%A}, {formatted}" if include_weekday else formatted
 
 
+def parse_event_date(value: str, today: date | None = None) -> date:
+    text = value.strip()
+    today = today or date.today()
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    try:
+        return datetime.strptime(f"{today.year}/{text}", "%Y/%m/%d").date()
+    except ValueError as exc:
+        raise ValueError("Use YYYY-MM-DD or MM/DD/YYYY") from exc
+
+
+def normalize_event_time(value: str) -> str:
+    text = value.strip()
+    for fmt in ("%I:%M %p", "%I %p", "%H:%M"):
+        try:
+            return datetime.strptime(text.upper(), fmt).strftime("%I:%M %p").lstrip("0")
+        except ValueError:
+            continue
+    raise ValueError("Use a time such as 2:00 PM or 14:00")
+
+
+def optional_field(value: str) -> str:
+    value = value.strip()
+    return "" if value == "-" else value
+
+
 def menu_markup() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
@@ -158,6 +198,7 @@ def menu_markup() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton("Help", callback_data="help"),
+            InlineKeyboardButton("Add to calendar", callback_data="add_event"),
         ],
         [InlineKeyboardButton("Stop announcements", callback_data="stop")],
     ])
@@ -184,8 +225,10 @@ def build_application(settings: Settings) -> Application:
     from sources.bouncing import BouncingSeminarSource
     from sources.thermal import ThermalSeminarsSource
     from sources.wednesday import WednesdaySeminarSource
+    from sources.manual import ManualEventSource
 
-    sources = [ThermalSeminarsSource(settings.website_url), BouncingSeminarSource()]
+    manual_events = ManualEventSource(settings.manual_events_file)
+    sources = [ThermalSeminarsSource(settings.website_url), BouncingSeminarSource(), manual_events]
     lunch_source = LessingsLunchSource(settings.lunch_menu_url)
     lunch_cache = LunchCache(settings.lunch_cache_file)
     if settings.wednesday_spreadsheet_ids:
@@ -244,6 +287,80 @@ def build_application(settings: Settings) -> Application:
             parse_mode=ParseMode.HTML,
         )
 
+    async def add_event_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        if update.callback_query:
+            await update.callback_query.answer()
+        context.user_data["new_event"] = {}
+        await update.effective_message.reply_text(
+            "Enter the event date (YYYY-MM-DD or MM/DD/YYYY). Send /cancel to stop."
+        )
+        return ADD_DATE
+
+    async def add_event_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        try:
+            event_date = parse_event_date(update.effective_message.text or "", datetime.now(timezone).date())
+        except ValueError as exc:
+            await update.effective_message.reply_text(str(exc))
+            return ADD_DATE
+        context.user_data["new_event"]["date"] = event_date
+        await update.effective_message.reply_text("Enter the talk title. Send - to leave it blank.")
+        return ADD_TITLE
+
+    async def add_event_title(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        context.user_data["new_event"]["title"] = optional_field(update.effective_message.text or "")
+        await update.effective_message.reply_text("Enter the speaker name. Send - to leave it blank.")
+        return ADD_SPEAKER
+
+    async def add_event_speaker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        context.user_data["new_event"]["speaker"] = optional_field(update.effective_message.text or "")
+        await update.effective_message.reply_text("Enter the abstract. Send - to leave it blank.")
+        return ADD_ABSTRACT
+
+    async def add_event_abstract(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        context.user_data["new_event"]["description"] = optional_field(update.effective_message.text or "")
+        await update.effective_message.reply_text("Enter the start time, for example 2:00 PM or 14:00.")
+        return ADD_TIME
+
+    async def add_event_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        try:
+            event_time = normalize_event_time(update.effective_message.text or "")
+        except ValueError as exc:
+            await update.effective_message.reply_text(str(exc))
+            return ADD_TIME
+        context.user_data["new_event"]["time"] = event_time
+        await update.effective_message.reply_text("Enter the location. Send - to leave it blank.")
+        return ADD_LOCATION
+
+    async def add_event_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        data = context.user_data.pop("new_event", {})
+        data["location"] = optional_field(update.effective_message.text or "")
+        if not data.get("title") and not data.get("description"):
+            await update.effective_message.reply_text(
+                "The event was not saved because both title and abstract were blank.",
+                reply_markup=menu_markup(),
+            )
+            return ConversationHandler.END
+        event = Event(
+            date=data["date"],
+            title=data.get("title", ""),
+            speaker=data.get("speaker", ""),
+            description=data.get("description", ""),
+            time=data["time"],
+            location=data["location"],
+            source=manual_events.name,
+        )
+        await asyncio.to_thread(manual_events.add, event)
+        await refresh(context)
+        exported = await export_cache(context)
+        result = "Event saved and added to the calendar." if exported else "Event saved locally, but the calendar export failed."
+        await update.effective_message.reply_text(result, reply_markup=menu_markup())
+        return ConversationHandler.END
+
+    async def cancel_add_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        context.user_data.pop("new_event", None)
+        await update.effective_message.reply_text("Event entry cancelled.", reply_markup=menu_markup())
+        return ConversationHandler.END
+
     async def refresh_lunch(context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             menu = await asyncio.to_thread(lunch_source.fetch)
@@ -290,18 +407,20 @@ def build_application(settings: Settings) -> Application:
         except Exception:
             LOG.exception("Weekly seminar refresh failed; retaining existing cache")
 
-    async def export_cache(context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def export_cache(context: ContextTypes.DEFAULT_TYPE) -> bool:
         if cache_writer is None:
-            return
+            return False
         try:
             cached_events = cache.load()
             if not cached_events:
                 LOG.warning("Talks cache is empty; skipping Google Sheets export")
-                return
+                return False
             await asyncio.to_thread(cache_writer.write, cached_events)
             LOG.info("Exported %d cached events to spreadsheet", len(cached_events))
+            return True
         except Exception:
             LOG.exception("Could not export talks cache to Google Sheets")
+            return False
 
     async def initial_refresh_and_export(context: ContextTypes.DEFAULT_TYPE) -> None:
         await refresh(context)
@@ -323,7 +442,7 @@ def build_application(settings: Settings) -> Application:
 
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(
-            "Choose a button below, or use /today, /week, /nextweek, or /lunch. /start subscribes to Monday announcements; /stop unsubscribes.",
+            "Choose a button below, or use /today, /week, /nextweek, /lunch, or /add. /start subscribes to Monday announcements; /stop unsubscribes; /cancel stops event entry.",
             reply_markup=menu_markup(),
         )
 
@@ -335,6 +454,21 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("nextweek", nextweek))
     application.add_handler(CommandHandler("lunch", lunch))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(add_event_start, pattern="^add_event$"),
+            CommandHandler("add", add_event_start),
+        ],
+        states={
+            ADD_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_event_date)],
+            ADD_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_event_title)],
+            ADD_SPEAKER: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_event_speaker)],
+            ADD_ABSTRACT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_event_abstract)],
+            ADD_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_event_time)],
+            ADD_LOCATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_event_location)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_add_event)],
+    ))
     application.add_handler(CallbackQueryHandler(button_callback))
     if application.job_queue is None:
         raise RuntimeError('Install the job queue extra: pip install "python-telegram-bot[job-queue]"')

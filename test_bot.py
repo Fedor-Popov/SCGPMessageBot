@@ -1,13 +1,14 @@
 from datetime import date
 from pathlib import Path
 
-from bot import format_lunch, format_talks, week_start
+from bot import format_lunch, format_talks, normalize_event_time, parse_event_date, week_start
 from cache import EventCache
 from events import Event
 from website import parse_schedule
 from sources.google_sheets import parse_rows
 from lunch import LunchCache, LunchItem, LunchMenu
 from sources.bouncing import BouncingSeminarSource
+from sources.manual import ManualEventSource
 from sheets_writer import rows_for_events
 
 
@@ -110,8 +111,27 @@ def test_lunch_cache_round_trip(tmp_path: Path):
 
 
 def test_bouncing_seminar_is_friday_in_common_room():
-    events = BouncingSeminarSource(3).fetch()
+    events = BouncingSeminarSource(12, start_date=date(2026, 9, 11)).fetch()
     assert len(events) == 3
     assert all(event.date.weekday() == 4 for event in events)
     assert all(event.time == "11:00 AM" for event in events)
     assert all(event.location == "Common Room" for event in events)
+    assert all(event.date < date(2026, 10, 1) for event in events)
+
+
+def test_manual_event_source_persists_and_replaces_duplicates(tmp_path: Path):
+    source = ManualEventSource(tmp_path / "manual.json")
+    source.add(Event(date(2026, 9, 20), "A Talk", speaker="Alice", description="First"))
+    source.add(Event(date(2026, 9, 20), "A Talk", speaker="Alice", description="Updated"))
+    assert source.fetch() == [Event(
+        date(2026, 9, 20),
+        "A Talk",
+        speaker="Alice",
+        description="Updated",
+    )]
+
+
+def test_manual_event_date_and_time_parsing():
+    assert parse_event_date("09/20/2026") == date(2026, 9, 20)
+    assert parse_event_date("09/20", date(2026, 1, 1)) == date(2026, 9, 20)
+    assert normalize_event_time("14:00") == "2:00 PM"
