@@ -1,6 +1,8 @@
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 from bot import format_lunch, format_talks, week_start
 from cache import EventCache
 from events import Event
@@ -8,6 +10,7 @@ from website import parse_schedule
 from sources.google_sheets import parse_rows
 from lunch import LunchCache, LunchItem, LunchMenu
 from sources.bouncing import BouncingSeminarSource
+from sheets_writer import rows_for_events
 
 
 def test_parse_schedule():
@@ -61,6 +64,36 @@ def test_sheet_rows_keep_missing_title_and_abstract():
     assert talks[0].title == ""
     assert talks[0].description == ""
     assert "A Speaker" in format_talks(talks, "Talks")
+
+
+def test_calendar_style_sheet_rows_are_supported():
+    talks = parse_rows([
+        ["Title", "Start", "Description", "Location", "Publish"],
+        ["Thermal Seminar", "11/09/2026 11.00.00", "Speaker: Alex Smith (YITP)\nTitle: A New Talk\nAbstract: Details", "Room 102", "TRUE"],
+        ["Hidden", "11/10/2026 11.00.00", "Speaker: Nobody", "Room 1", "FALSE"],
+    ], "calendar")
+    assert len(talks) == 1
+    assert talks[0].date == date(2026, 11, 9)
+    assert talks[0].time == "11:00 AM"
+    assert talks[0].title == "A New Talk"
+    assert talks[0].speaker == "Alex Smith"
+    assert talks[0].affiliation == "YITP"
+    assert talks[0].description == "Details"
+
+
+def test_sheet_export_requires_title_or_description_and_checks_publish():
+    rows = rows_for_events([
+        Event(date(2026, 9, 14), "", speaker="Speaker only"),
+        Event(date(2026, 9, 15), "A Talk", time="2:00 PM"),
+        Event(date(2026, 9, 16), "", description="Abstract only"),
+    ])
+    assert len(rows) == 3
+    assert rows[1][0] == "A Talk"
+    assert isinstance(rows[1][1], float)
+    assert rows[1][2] - rows[1][1] == pytest.approx(1 / 24)
+    assert rows[1][5] is True
+    assert rows[2][3] == "Abstract: Abstract only"
+    assert all(row[0] != "Speaker only" for row in rows[1:])
 
 
 def test_format_lunch():

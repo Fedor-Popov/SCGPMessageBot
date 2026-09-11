@@ -36,6 +36,8 @@ class Settings:
     wednesday_spreadsheet_ids: tuple[str, ...]
     journal_club_spreadsheet_ids: tuple[str, ...]
     thermal_spreadsheet_ids: tuple[str, ...]
+    additional_spreadsheet_ids: tuple[str, ...]
+    cache_export_spreadsheet_id: str
     google_token_file: Path
     timezone: str
     refresh_hour: int
@@ -51,6 +53,9 @@ class Settings:
         wednesday_ids = tuple(value.strip() for value in os.getenv("GOOGLE_WEDNESDAY_SPREADSHEET_IDS", "").split(",") if value.strip())
         journal_ids = tuple(value.strip() for value in os.getenv("GOOGLE_JOURNAL_CLUB_SPREADSHEET_IDS", "").split(",") if value.strip())
         thermal_ids = tuple(value.strip() for value in os.getenv("GOOGLE_THERMAL_SPREADSHEET_IDS", "").split(",") if value.strip())
+        additional_ids = tuple(value.strip() for value in os.getenv("GOOGLE_ADDITIONAL_SPREADSHEET_IDS", "").split(",") if value.strip())
+        export_id = os.getenv("GOOGLE_CACHE_EXPORT_SPREADSHEET_ID", "").strip() or (additional_ids[0] if additional_ids else "")
+        additional_ids = tuple(value for value in additional_ids if value != export_id)
         if spreadsheet_ids and not (wednesday_ids or journal_ids or thermal_ids):
             # Backward-compatible mapping for the original two-sheet setup:
             # first sheet = Wednesday Seminar, second sheet = Journal Club.
@@ -65,6 +70,8 @@ class Settings:
             wednesday_spreadsheet_ids=wednesday_ids,
             journal_club_spreadsheet_ids=journal_ids,
             thermal_spreadsheet_ids=thermal_ids,
+            additional_spreadsheet_ids=additional_ids,
+            cache_export_spreadsheet_id=export_id,
             google_token_file=Path(os.getenv("GOOGLE_OAUTH_TOKEN_FILE", "google-token.json")),
             timezone=os.getenv("BOT_TIMEZONE", "America/New_York"),
             refresh_hour=int(os.getenv("REFRESH_HOUR", "3")),
@@ -188,7 +195,14 @@ def build_application(settings: Settings) -> Application:
     if settings.thermal_spreadsheet_ids:
         from sources.google_sheets import GoogleSheetsSource
         sources.append(GoogleSheetsSource(list(settings.thermal_spreadsheet_ids), settings.google_token_file, default_time="2:00 PM", default_location="102", source_name="thermal-seminar-sheet"))
+    if settings.additional_spreadsheet_ids:
+        from sources.google_sheets import GoogleSheetsSource
+        sources.append(GoogleSheetsSource(list(settings.additional_spreadsheet_ids), settings.google_token_file, source_name="additional-google-sheet"))
     cache = EventCache(settings.cache_file)
+    cache_writer = None
+    if settings.cache_export_spreadsheet_id:
+        from sheets_writer import GoogleSheetsCacheWriter
+        cache_writer = GoogleSheetsCacheWriter(settings.cache_export_spreadsheet_id, settings.google_token_file)
     subscribers = SubscriberStore(settings.subscribers_file)
     timezone = ZoneInfo(settings.timezone)
 
@@ -276,6 +290,23 @@ def build_application(settings: Settings) -> Application:
         except Exception:
             LOG.exception("Weekly seminar refresh failed; retaining existing cache")
 
+    async def export_cache(context: ContextTypes.DEFAULT_TYPE) -> None:
+        if cache_writer is None:
+            return
+        try:
+            cached_events = cache.load()
+            if not cached_events:
+                LOG.warning("Talks cache is empty; skipping Google Sheets export")
+                return
+            await asyncio.to_thread(cache_writer.write, cached_events)
+            LOG.info("Exported %d cached events to spreadsheet", len(cached_events))
+        except Exception:
+            LOG.exception("Could not export talks cache to Google Sheets")
+
+    async def initial_refresh_and_export(context: ContextTypes.DEFAULT_TYPE) -> None:
+        await refresh(context)
+        await export_cache(context)
+
     async def weekly_announcement(context: ContextTypes.DEFAULT_TYPE) -> None:
         today_date = datetime.now(timezone).date()
         start_date = week_start(today_date)
@@ -320,9 +351,10 @@ def build_application(settings: Settings) -> Application:
         name="lunch-refresh",
     )
     application.job_queue.run_daily(weekly_announcement, time=time(settings.announcement_hour, 0, tzinfo=timezone), days=(1,), name="weekly-talks")
+    application.job_queue.run_daily(export_cache, time=time(1, 0, tzinfo=timezone), name="daily-cache-export")
     # Refresh once at every startup so newly configured sources are included
     # immediately; the regular Saturday job keeps the cache current afterward.
-    application.job_queue.run_once(refresh, when=timedelta(seconds=1), name="initial-refresh")
+    application.job_queue.run_once(initial_refresh_and_export, when=timedelta(seconds=1), name="initial-refresh-and-export")
     return application
 
 

@@ -34,10 +34,14 @@ Copy `.env.example` to `.env` and set the Telegram token. The website source wor
 GOOGLE_WEDNESDAY_SPREADSHEET_IDS=first_sheet_id
 GOOGLE_JOURNAL_CLUB_SPREADSHEET_IDS=
 GOOGLE_THERMAL_SPREADSHEET_IDS=
+GOOGLE_ADDITIONAL_SPREADSHEET_IDS=
+GOOGLE_CACHE_EXPORT_SPREADSHEET_ID=
 GOOGLE_OAUTH_TOKEN_FILE=google-token.json
 ```
 
-The Sheets must have headers named `Dates`/`Date`, `Name`/`Speaker`, `Talk Title`/`Title`, and `Talk Abstract`/`Abstract`. Extra fields such as `Time`, `Location`, and `Link` are optional. Column positions may differ between spreadsheets.
+The Sheets can use headers named `Dates`/`Date`, `Name`/`Speaker`, `Talk Title`/`Title`, and `Talk Abstract`/`Abstract`. Calendar-style sheets using `Title`, `Start`, `Description`, `Location`, and optional `Publish` are also supported. In that format, `Speaker:`, `Title:`, and `Abstract:` may be placed on separate lines in `Description`. Column positions may differ between spreadsheets.
+
+Use `GOOGLE_ADDITIONAL_SPREADSHEET_IDS` for additional input sheets. Set `GOOGLE_CACHE_EXPORT_SPREADSHEET_ID` to a Google Calendar-style output sheet to replace its rows with `talks-cache.json` at startup and every day at 1:00 AM. Events are exported only when a title or description is present. `Start` and `End` are real date-time cells, and `Publish` is written as a checked checkbox. For backward compatibility, if the export variable is empty, the first additional spreadsheet ID is used as the output sheet.
 
 For a terminal-only server, the simplest authentication is Google Application Default Credentials. Run this once as the Google account that can read the sheets:
 

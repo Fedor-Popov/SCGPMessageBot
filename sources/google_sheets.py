@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -15,16 +16,18 @@ from googleapiclient.discovery import build
 
 from events import Event
 
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 ALIASES = {
     "date": {"date", "dates", "day", "when", "date of wednesday seminar", "date of seminar"},
     "title": {"title", "talk", "talk title", "name of talk"},
     "speaker": {"speaker", "presenter", "lecturer", "name"},
     "affiliation": {"affiliation", "institution", "university"},
-    "time": {"time", "start", "start time"},
+    "time": {"time", "start time"},
     "location": {"location", "room", "where"},
     "description": {"description", "abstract", "talk abstract", "details"},
     "link": {"link", "url", "slides", "recording"},
+    "start": {"start", "start date", "starts"},
+    "publish": {"publish", "published", "visible"},
 }
 
 
@@ -43,13 +46,46 @@ def _parse_date(value: Any) -> date:
     raise ValueError(f"Unsupported spreadsheet date {text!r}")
 
 
+def _parse_datetime(value: Any) -> datetime:
+    text = str(value or "").strip()
+    for fmt in (
+        "%m/%d/%Y %H.%M.%S",
+        "%m/%d/%Y %H:%M:%S",
+        "%m/%d/%Y %H:%M",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+    ):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    raise ValueError(f"Unsupported spreadsheet start time {text!r}")
+
+
+def _description_fields(description: str) -> tuple[str, str, str, str]:
+    """Extract optional calendar-style metadata from a description."""
+    fields: dict[str, str] = {}
+    pattern = re.compile(r"(?im)^\s*(speaker|title|abstract)\s*:\s*(.*?)(?=^\s*(?:speaker|title|abstract)\s*:|\Z)", re.MULTILINE | re.DOTALL)
+    for match in pattern.finditer(description):
+        fields[match.group(1).lower()] = match.group(2).strip()
+    speaker = fields.get("speaker", "")
+    affiliation = ""
+    affiliation_match = re.match(r"^(.*?)\s*\(([^()]*)\)\s*$", speaker)
+    if affiliation_match:
+        speaker, affiliation = affiliation_match.groups()
+    remaining = fields.get("abstract", "")
+    if not fields:
+        remaining = description
+    return speaker, affiliation, fields.get("title", ""), remaining
+
+
 def parse_rows(rows: list[list[Any]], source: str, default_time: str = "", default_location: str = "") -> list[Event]:
     if not rows:
         return []
     headers = {_header(value): index for index, value in enumerate(rows[0])}
     indexes = {field: next((headers[name] for name in aliases if name in headers), None) for field, aliases in ALIASES.items()}
-    if indexes["date"] is None or indexes["title"] is None:
-        raise ValueError("Spreadsheet must contain date and talk title columns")
+    if indexes["title"] is None or (indexes["date"] is None and indexes["start"] is None):
+        raise ValueError("Spreadsheet must contain a title and either date or start columns")
 
     def cell(row: list[Any], field: str) -> str:
         index = indexes[field]
@@ -60,14 +96,19 @@ def parse_rows(rows: list[list[Any]], source: str, default_time: str = "", defau
         if not any(str(value).strip() for value in row):
             continue
         try:
+            if indexes["publish"] is not None and cell(row, "publish").lower() in {"false", "no", "0"}:
+                continue
+            description = cell(row, "description")
+            embedded_speaker, embedded_affiliation, embedded_title, embedded_abstract = _description_fields(description)
+            start = _parse_datetime(cell(row, "start")) if indexes["start"] is not None and cell(row, "start") else None
             events.append(Event(
-                date=_parse_date(cell(row, "date")),
-                title=cell(row, "title"),
-                speaker=cell(row, "speaker"),
-                affiliation=cell(row, "affiliation"),
-                time=cell(row, "time") or default_time,
+                date=start.date() if start else _parse_date(cell(row, "date")),
+                title=embedded_title or cell(row, "title"),
+                speaker=cell(row, "speaker") or embedded_speaker,
+                affiliation=cell(row, "affiliation") or embedded_affiliation,
+                time=cell(row, "time") or (start.strftime("%I:%M %p").lstrip("0") if start else default_time),
                 location=cell(row, "location") or default_location,
-                description=cell(row, "description"),
+                description=embedded_abstract,
                 link=cell(row, "link"),
                 source=source,
             ))
