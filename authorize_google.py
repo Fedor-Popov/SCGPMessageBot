@@ -5,7 +5,10 @@ from pathlib import Path
 
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/calendar",
+]
 
 client_file = Path(os.environ.get("GOOGLE_OAUTH_CLIENT_FILE", "oauth-client.json"))
 token_file = Path(os.environ.get("GOOGLE_OAUTH_TOKEN_FILE", "google-token.json"))

@@ -21,7 +21,7 @@ SERIES = {
 }
 
 
-def public_snapshot(cache: dict, series_names: dict[str, str] | None = None) -> dict:
+def public_snapshot(cache: dict, series_names: dict[str, str] | None = None, calendar_url: str = "") -> dict:
     names = {**SERIES, **(series_names or {})}
     events = []
     for item in cache["events"]:
@@ -39,7 +39,13 @@ def public_snapshot(cache: dict, series_names: dict[str, str] | None = None) -> 
         event["link"] = link if safe else ""
         events.append(event)
     events.sort(key=lambda event: (event["date"], event["time"], event["title"], event["speaker"]))
-    return {"schema_version": 1, "timezone": "America/New_York", "updated_at": cache.get("updated_at"), "events": events}
+    return {
+        "schema_version": 1,
+        "timezone": "America/New_York",
+        "updated_at": cache.get("updated_at"),
+        "calendar_url": calendar_url,
+        "events": events,
+    }
 
 
 def series_from_env() -> dict[str, str]:

@@ -49,6 +49,10 @@ GOOGLE_THERMAL_SPREADSHEET_IDS=
 GOOGLE_ADDITIONAL_SPREADSHEET_IDS=
 GOOGLE_CACHE_EXPORT_SPREADSHEET_ID=
 GOOGLE_OAUTH_TOKEN_FILE=google-token.json
+GOOGLE_CALENDAR_ENABLED=false
+GOOGLE_CALENDAR_ID=
+GOOGLE_CALENDAR_NAME=SCGP Seminars
+GOOGLE_CALENDAR_STATE_FILE=google-calendar.json
 ```
 
 The Sheets can use headers named `Dates`/`Date`, `Name`/`Speaker`, `Talk Title`/`Title`, and `Talk Abstract`/`Abstract`. Calendar-style sheets using `Title`, `Start`, `Description`, `Location`, and optional `Publish` are also supported. In that format, `Speaker:`, `Title:`, and `Abstract:` may be placed on separate lines in `Description`. Column positions may differ between spreadsheets.
@@ -72,6 +76,16 @@ uv run python authorize_google.py
 ```
 
 Sign in with the Google account that can access both spreadsheets. Copy `google-token.json` securely to the remote server. The server uses the refresh token and never opens a browser.
+
+To create the SCGP public Google Calendar, first authorize the Calendar scope with the same command above, then set these values on the server:
+
+```env
+GOOGLE_CALENDAR_ENABLED=true
+GOOGLE_CALENDAR_NAME=SCGP Seminars
+GOOGLE_CALENDAR_STATE_FILE=google-calendar.json
+```
+
+On the next bot refresh, it creates (or reuses) a public calendar named `SCGP Seminars`, replaces only events previously created by this bot, and publishes its Google Calendar link to the website. `GOOGLE_CALENDAR_ID` is optional; the bot stores the generated ID in the state file. The Google Calendar API must be enabled in the Google Cloud project used by the OAuth client.
 
 ## Public seminar website
 

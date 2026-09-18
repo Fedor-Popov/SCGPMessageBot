@@ -67,6 +67,10 @@ class Settings:
     announcement_hour: int
     subscribers_file: Path
     website_repo_url: str = ""
+    google_calendar_enabled: bool = False
+    google_calendar_id: str = ""
+    google_calendar_name: str = "SCGP Seminars"
+    google_calendar_state_file: Path = Path("google-calendar.json")
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -104,6 +108,10 @@ class Settings:
             announcement_hour=int(os.getenv("ANNOUNCEMENT_HOUR", "10")),
             subscribers_file=Path(os.getenv("SUBSCRIBERS_FILE", "subscribers.json")),
             website_repo_url=os.getenv("WEBSITE_REPO_URL", "").strip(),
+            google_calendar_enabled=os.getenv("GOOGLE_CALENDAR_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"},
+            google_calendar_id=os.getenv("GOOGLE_CALENDAR_ID", "").strip(),
+            google_calendar_name=os.getenv("GOOGLE_CALENDAR_NAME", "SCGP Seminars").strip() or "SCGP Seminars",
+            google_calendar_state_file=Path(os.getenv("GOOGLE_CALENDAR_STATE_FILE", "google-calendar.json")),
         )
 
 
@@ -262,6 +270,16 @@ def build_application(settings: Settings) -> Application:
     if settings.cache_export_spreadsheet_id:
         from alessio_calendar import AlessioCalendar
         alessio_calendar = AlessioCalendar(settings.cache_export_spreadsheet_id, settings.google_token_file)
+    google_calendar = None
+    if settings.google_calendar_enabled:
+        from google_calendar import GoogleCalendarPublisher
+        google_calendar = GoogleCalendarPublisher(
+            settings.google_calendar_id,
+            settings.google_token_file,
+            settings.google_calendar_state_file,
+            settings.google_calendar_name,
+            settings.timezone,
+        )
     spreadsheet_sync_lock = asyncio.Lock()
     website_sync_lock = asyncio.Lock()
     website_publisher = SitePublisher(settings.website_repo_url) if settings.website_repo_url else None
@@ -528,7 +546,8 @@ def build_application(settings: Settings) -> Application:
             async with website_sync_lock:
                 # Read the latest cache after obtaining the lock: queued updates
                 # must not publish an older snapshot after a newer /add or /delete.
-                snapshot = public_snapshot(json.loads(settings.cache_file.read_text()), website_series)
+                calendar_link = google_calendar.public_url if google_calendar is not None else ""
+                snapshot = public_snapshot(json.loads(settings.cache_file.read_text()), website_series, calendar_link)
                 changed = await asyncio.to_thread(website_publisher.publish, snapshot)
                 LOG.info("Website schedule %s", "published" if changed else "already up to date")
         except Exception:
@@ -547,30 +566,40 @@ def build_application(settings: Settings) -> Application:
             unique = {(event.date, event.title.lower(), event.speaker.lower()): event for event in events}
             cached_events = cache.save_refresh(list(unique.values()), datetime.now(timezone).date())
             LOG.info("Refreshed %d events from %d sources into %s", len(unique), len(sources), settings.cache_file)
-            if website_publisher is not None:
-                context.application.create_task(publish_website())
             if sync_spreadsheet:
                 await sync_events(cached_events)
+            if website_publisher is not None:
+                context.application.create_task(publish_website())
         except Exception:
             LOG.exception("Weekly seminar refresh failed; retaining existing cache")
 
     async def sync_events(events: list[Event]) -> bool:
-        if alessio_calendar is None:
+        if alessio_calendar is None and google_calendar is None:
             return False
         try:
             if not events:
-                LOG.warning("No events supplied; skipping Google Sheets export")
+                LOG.warning("No events supplied; skipping calendar exports")
                 return False
+            changed = False
             async with spreadsheet_sync_lock:
-                added_count = await asyncio.to_thread(alessio_calendar.sync, events)
-            LOG.info("Rebuilt the spreadsheet with %d event rows", added_count)
-            return True
+                if alessio_calendar is not None:
+                    added_count = await asyncio.to_thread(alessio_calendar.sync, events)
+                    LOG.info("Rebuilt the spreadsheet with %d event rows", added_count)
+                    changed = True
+                if google_calendar is not None:
+                    added_count = await asyncio.to_thread(google_calendar.sync, events)
+                    LOG.info("Rebuilt the public Google Calendar with %d event rows", added_count)
+                    changed = True
+            return changed
         except Exception:
-            LOG.exception("Could not sync events to Google Sheets")
+            LOG.exception("Could not sync events to external calendars")
             return False
 
     async def export_cache(context: ContextTypes.DEFAULT_TYPE) -> bool:
-        return await sync_events(cache.load())
+        changed = await sync_events(cache.load())
+        if changed and website_publisher is not None:
+            context.application.create_task(publish_website())
+        return changed
 
     async def weekly_announcement(context: ContextTypes.DEFAULT_TYPE) -> None:
         today_date = datetime.now(timezone).date()

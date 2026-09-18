@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+from google_calendar import calendar_url
 from site_publisher import SitePublisher, public_snapshot, series_from_env, write_snapshot
 
 
@@ -16,7 +17,18 @@ def main() -> None:
     args = parser.parse_args()
     cache_path = Path(os.getenv("TALKS_CACHE_FILE", "talks-cache.json"))
     try:
-        snapshot = public_snapshot(json.loads(cache_path.read_text()), series_from_env())
+        calendar_id = os.getenv("GOOGLE_CALENDAR_ID", "").strip()
+        state_file = Path(os.getenv("GOOGLE_CALENDAR_STATE_FILE", "google-calendar.json"))
+        if not calendar_id and state_file.exists():
+            try:
+                calendar_id = str(json.loads(state_file.read_text()).get("calendar_id", ""))
+            except (OSError, ValueError):
+                calendar_id = ""
+        snapshot = public_snapshot(
+            json.loads(cache_path.read_text()),
+            series_from_env(),
+            calendar_url(calendar_id) if calendar_id else "",
+        )
         if args.output:
             write_snapshot(args.output, snapshot)
             print(f"Exported {len(snapshot['events'])} events to {args.output}")
