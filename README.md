@@ -19,6 +19,7 @@ To add another event series, create `sources/my_event.py` with a class implement
 Current modules:
 
 - `sources/thermal.py` reads the public Thermal Seminars website and supplies the default 11:00 AM / room 102 metadata, also used for Thermal Seminar sheets.
+- `sources/yitp_calendar.py` reads the public YITP Google Calendar iCalendar feed shown on the [YITP Calendar page](https://www.stonybrook.edu/cn-yang-physics/calendar.html). Override its URL with `YITP_CALENDAR_URL`; no Google OAuth token is needed.
 - `sources/wednesday.py` reads Wednesday Seminar sheets and supplies the default 2:00 PM / room 313 metadata.
 - `sources/journal_club.py` reads Journal Club sheets and supplies the default 2:00 PM / Common Room metadata.
 - `sources/manual.py` persists events entered through the `/add` command.

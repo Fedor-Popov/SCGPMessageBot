@@ -58,6 +58,14 @@ class Settings:
     refresh_interval_hours: int
     announcement_hour: int
     subscribers_file: Path
+    yitp_calendar_url: str = "https://calendar.google.com/calendar/ical/cal%40max2.physics.sunysb.edu/public/basic.ics"
+    cache_export_spreadsheet_id: str
+    google_token_file: Path
+    timezone: str
+    refresh_hour: int
+    refresh_interval_hours: int
+    announcement_hour: int
+    subscribers_file: Path
     website_repo_url: str = ""
 
     @classmethod
@@ -87,6 +95,7 @@ class Settings:
             journal_club_spreadsheet_ids=journal_ids,
             thermal_spreadsheet_ids=thermal_ids,
             additional_spreadsheet_ids=additional_ids,
+            yitp_calendar_url=os.getenv("YITP_CALENDAR_URL", "https://calendar.google.com/calendar/ical/cal%40max2.physics.sunysb.edu/public/basic.ics"),
             cache_export_spreadsheet_id=export_id,
             google_token_file=Path(os.getenv("GOOGLE_OAUTH_TOKEN_FILE", "google-token.json")),
             timezone=os.getenv("BOT_TIMEZONE", "America/New_York"),
@@ -229,12 +238,13 @@ def format_lunch(menu: LunchMenu) -> str:
 def build_application(settings: Settings) -> Application:
     from sources.journal_club import JournalClubSource
     from sources.thermal import ThermalSeminarsSource
+    from sources.yitp_calendar import YITPCalendarSource
     from sources.wednesday import WednesdaySeminarSource
     from sources.manual import ManualEventSource
 
     manual_events = ManualEventSource(settings.manual_events_file)
     password_access = PasswordAccess()
-    sources = [ThermalSeminarsSource(settings.website_url), manual_events]
+    sources = [ThermalSeminarsSource(settings.website_url), YITPCalendarSource(settings.yitp_calendar_url), manual_events]
     lunch_source = LessingsLunchSource(settings.lunch_menu_url)
     lunch_cache = LunchCache(settings.lunch_cache_file)
     if settings.wednesday_spreadsheet_ids:
