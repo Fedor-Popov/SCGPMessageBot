@@ -11,6 +11,8 @@ from bot import ADD_DATE, ADD_LOCATION, ADD_PASSWORD, DELETE_PASSWORD, Settings,
 from events import Event
 from sources.manual import ManualEventSource
 from sources.thermal import ThermalSeminarsSource
+from sources.journal_club import JournalClubSource
+from sources.google_sheets import parse_rows
 from telegram.ext import CallbackQueryHandler, ConversationHandler
 from website import WebsiteTalkSource
 
@@ -133,3 +135,12 @@ def test_thermal_default_time_and_location(monkeypatch):
     event, = ThermalSeminarsSource("https://example.test").fetch()
     assert event.time == "11:00 AM"
     assert event.location == "102"
+
+
+def test_journal_club_default_location(tmp_path):
+    rows = [["Date", "Title"], ["09/17/2026", "Journal Club"]]
+
+    event = JournalClubSource([], tmp_path / "token.json")
+    parsed = parse_rows(rows, event.name, event.default_time, event.default_location)
+
+    assert parsed[0].location == "SCGP Common Room"
