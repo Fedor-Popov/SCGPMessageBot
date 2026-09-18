@@ -46,6 +46,12 @@ def test_cache_refresh_retains_previous_events(tmp_path: Path):
     assert merged == [old, Event(date(2026, 9, 21), "New talk")]
 
 
+def test_cache_refresh_removes_deleted_bouncing_source(tmp_path: Path):
+    cache = EventCache(tmp_path / "talks.json")
+    cache.save([Event(date(2026, 9, 10), "Bouncing Seminar", source="bouncing-seminar")])
+    assert cache.save_refresh([], date(2026, 9, 18)) == []
+
+
 def test_week_start():
     assert week_start(date(2026, 9, 16)) == date(2026, 9, 14)
 
