@@ -17,6 +17,7 @@ from access import PasswordAccess
 from cache import EventCache
 from dotenv import load_dotenv
 from events import Event
+from site_publisher import SitePublisher, public_snapshot
 from lunch import LessingsLunchSource, LunchCache, LunchMenu
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
@@ -57,6 +58,7 @@ class Settings:
     refresh_interval_hours: int
     announcement_hour: int
     subscribers_file: Path
+    website_repo_url: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -92,6 +94,7 @@ class Settings:
             refresh_interval_hours=int(os.getenv("REFRESH_INTERVAL_HOURS", "1")),
             announcement_hour=int(os.getenv("ANNOUNCEMENT_HOUR", "10")),
             subscribers_file=Path(os.getenv("SUBSCRIBERS_FILE", "subscribers.json")),
+            website_repo_url=os.getenv("WEBSITE_REPO_URL", "").strip(),
         )
 
 
@@ -251,6 +254,17 @@ def build_application(settings: Settings) -> Application:
         from sheets_writer import GoogleSheetsCacheWriter
         cache_writer = GoogleSheetsCacheWriter(settings.cache_export_spreadsheet_id, settings.google_token_file)
     spreadsheet_sync_lock = asyncio.Lock()
+    website_sync_lock = asyncio.Lock()
+    website_publisher = SitePublisher(settings.website_repo_url) if settings.website_repo_url else None
+    website_series = {
+        f"google:{sheet_id}": label
+        for ids, label in (
+            (settings.wednesday_spreadsheet_ids, "Wednesday Seminar"),
+            (settings.journal_club_spreadsheet_ids, "Journal Club"),
+            (settings.thermal_spreadsheet_ids, "Thermal Seminar"),
+        )
+        for sheet_id in ids
+    }
     subscribers = SubscriberStore(settings.subscribers_file)
     timezone = ZoneInfo(settings.timezone)
 
@@ -498,6 +512,19 @@ def build_application(settings: Settings) -> Application:
         if handler:
             await handler(update, context)
 
+    async def publish_website() -> None:
+        if website_publisher is None:
+            return
+        try:
+            async with website_sync_lock:
+                # Read the latest cache after obtaining the lock: queued updates
+                # must not publish an older snapshot after a newer /add or /delete.
+                snapshot = public_snapshot(json.loads(settings.cache_file.read_text()), website_series)
+                changed = await asyncio.to_thread(website_publisher.publish, snapshot)
+                LOG.info("Website schedule %s", "published" if changed else "already up to date")
+        except Exception:
+            LOG.exception("Website publication failed; Telegram remains available; retry on next refresh")
+
     async def refresh(context: ContextTypes.DEFAULT_TYPE, *, sync_spreadsheet: bool = True) -> None:
         try:
             events: list[Event] = []
@@ -512,6 +539,8 @@ def build_application(settings: Settings) -> Application:
             cached_events = sorted(unique.values(), key=lambda event: (event.date, event.title.lower()))
             cache.save(cached_events)
             LOG.info("Refreshed %d events from %d sources into %s", len(unique), len(sources), settings.cache_file)
+            if website_publisher is not None:
+                context.application.create_task(publish_website())
             if sync_spreadsheet:
                 await sync_events(cached_events)
         except Exception:

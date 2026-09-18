@@ -73,6 +73,57 @@ uv run python authorize_google.py
 
 Sign in with the Google account that can access both spreadsheets. Copy `google-token.json` securely to the remote server. The server uses the refresh token and never opens a browser.
 
+## Public seminar website
+
+The public schedule is hosted at https://scgp-seminars.github.io in the separate
+`scgp-seminars/scgp-seminars.github.io` repository. In that repository, enable
+**Settings → Pages → Deploy from a branch → main → / (root) → Save**.
+GitHub Pages serves static files; the Telegram bot continues to run on Ubuntu.
+
+To enable automatic publishing, add this to the bot's `.env` on the server:
+
+```env
+WEBSITE_REPO_URL=git@github.com:scgp-seminars/scgp-seminars.github.io.git
+```
+
+Install Git and OpenSSH (`sudo apt install git openssh-client`). The user running
+the bot must have SSH **write** access to the website repository. An existing
+authorized GitHub SSH key works. Alternatively, create a dedicated key with
+`ssh-keygen -t ed25519 -f ~/.ssh/scgp_website -C scgp-website`, add its `.pub` file
+under the website repository's **Settings → Deploy keys**, and enable **Allow
+write access**. Select that key for `github.com` in `~/.ssh/config` with
+`IdentityFile ~/.ssh/scgp_website` and `IdentitiesOnly yes` if no other GitHub
+identity is required. Verify GitHub's host-key fingerprint before accepting the
+first SSH connection. Do not upload the private key or any bot credentials.
+
+Test publishing the existing cache, without launching Telegram or writing Sheets:
+
+```bash
+uv run python publish_website.py
+```
+
+Then restart your existing bot service. Every successful startup/hourly refresh,
+including refreshes after `/add` and `/delete`, queues a website update separately
+from the Google Sheets rebuild. GitHub may take a few minutes to deploy it. Open
+pages check for fresh data every five minutes. The page shows times in Eastern
+Time, groups events by day, and offers This week, Next week and All upcoming.
+
+Only allowlisted public event fields are pushed to `data/events.json`: dates,
+titles, speakers, affiliations, times, locations, abstracts, safe web links and
+seminar series. No `.env`, tokens, subscriber lists or source spreadsheet IDs are
+copied. Deleted manual events disappear from the next snapshot (previously
+published information remains in Git history). A failed push leaves the previous
+site intact and is retried on the next refresh; inspect the bot's logs for errors.
+The page warns when the cache timestamp is over 48 hours old.
+
+For a local website preview only:
+
+```bash
+uv run python publish_website.py --output ../scgp-seminars.github.io/data/events.json
+cd ../scgp-seminars.github.io
+python3 -m http.server 8080 --bind 127.0.0.1
+```
+
 ## Run
 
 ```bash
