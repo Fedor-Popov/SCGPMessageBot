@@ -55,6 +55,34 @@ def _calendar_datetime(value: str, parameters: dict[str, str]) -> datetime:
     return parsed.replace(tzinfo=ZoneInfo(timezone) if timezone else NEW_YORK).astimezone(NEW_YORK)
 
 
+def _recurrence_starts(start: datetime, rule_value: str) -> list[datetime]:
+    """Expand the weekly/daily recurrence forms used by Google Calendar."""
+    rule = {part.split("=", 1)[0].upper(): part.split("=", 1)[1] for part in rule_value.split(";") if "=" in part}
+    frequency = rule.get("FREQ", "").upper()
+    if frequency not in {"DAILY", "WEEKLY"}:
+        return [start]
+    until = _calendar_datetime(rule["UNTIL"], {}) if rule.get("UNTIL") else start + timedelta(days=730)
+    interval = max(1, int(rule.get("INTERVAL", "1")))
+    count = int(rule["COUNT"]) if rule.get("COUNT", "").isdigit() else None
+    weekdays = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
+    selected_days = [weekdays[day] for day in rule.get("BYDAY", "").split(",") if day in weekdays]
+    if frequency == "DAILY":
+        selected_days = [start.weekday()]
+    elif not selected_days:
+        selected_days = [start.weekday()]
+    occurrences: list[datetime] = []
+    cursor = start.date()
+    while cursor <= until.date() and (count is None or len(occurrences) < count):
+        days_since_start = (cursor - start.date()).days
+        in_interval = days_since_start % interval == 0 if frequency == "DAILY" else (days_since_start // 7) % interval == 0
+        if in_interval and cursor.weekday() in selected_days:
+            occurrence = start.replace(year=cursor.year, month=cursor.month, day=cursor.day)
+            if occurrence >= start and occurrence <= until:
+                occurrences.append(occurrence)
+        cursor += timedelta(days=1)
+    return occurrences or [start]
+
+
 def parse_icalendar(payload: str) -> list[Event]:
     events: list[Event] = []
     current: dict[str, tuple[str, dict[str, str]]] | None = None
@@ -66,22 +94,23 @@ def parse_icalendar(payload: str) -> list[Event]:
             summary = current.get("SUMMARY", ("", {}))[0]
             if start and summary:
                 start_dt = _calendar_datetime(*start)
-                end_dt = _calendar_datetime(*current["DTEND"]) if "DTEND" in current else None
                 location = current.get("LOCATION", ("", {}))[0]
                 description = current.get("DESCRIPTION", ("", {}))[0]
                 link = current.get("URL", ("", {}))[0]
-                events.append(Event(
-                    date=start_dt.date(),
-                    title=summary,
-                    time="" if start[1].get("VALUE") == "DATE" else start_dt.strftime("%I:%M %p").lstrip("0"),
-                    location=location,
-                    description=description,
-                    link=link,
-                    source="yitp-calendar",
-                ))
+                starts = _recurrence_starts(start_dt, current["RRULE"][0]) if "RRULE" in current else [start_dt]
+                for occurrence in starts:
+                    events.append(Event(
+                        date=occurrence.date(),
+                        title=summary,
+                        time="" if start[1].get("VALUE") == "DATE" else occurrence.strftime("%I:%M %p").lstrip("0"),
+                        location=location,
+                        description=description,
+                        link=link,
+                        source="yitp-calendar",
+                    ))
             current = None
         elif current is not None:
-            for name in ("DTSTART", "DTEND", "SUMMARY", "DESCRIPTION", "LOCATION", "URL"):
+            for name in ("DTSTART", "DTEND", "RRULE", "SUMMARY", "DESCRIPTION", "LOCATION", "URL"):
                 parsed = _property(line, name)
                 if parsed is not None:
                     current[name] = parsed

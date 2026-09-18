@@ -50,3 +50,14 @@ def test_yitp_source_keeps_recent_history_and_future_only():
         Event(date(2026, 12, 2), "Future"),
     ]
     assert [event.title for event in filter_events(events, date(2026, 9, 18), lookback_days=30)] == ["Recent", "Future"]
+
+
+def test_weekly_yitp_recurrence_expands_future_occurrences():
+    events = parse_icalendar("""BEGIN:VEVENT
+DTSTART;TZID=America/New_York:20260918T133000
+RRULE:FREQ=WEEKLY;UNTIL=20261003T035959Z;BYDAY=FR
+SUMMARY:Advanced Graduate Theory Seminar-Martin Rocek
+END:VEVENT
+""")
+    assert [event.date for event in events] == [date(2026, 9, 18), date(2026, 9, 25), date(2026, 10, 2)]
+    assert all(event.time == "1:30 PM" for event in events)
