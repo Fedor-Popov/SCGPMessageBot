@@ -81,7 +81,6 @@ def test_cache_refresh_publishes_independently_of_sheets(tmp_path, monkeypatch, 
     from bot import Settings, build_application
     from events import Event
     from sources.thermal import ThermalSeminarsSource
-    from sources.bouncing import BouncingSeminarSource
 
     settings = Settings(
         telegram_token="123456:test-token", website_url="https://example.test", lunch_menu_url="https://example.test",
@@ -92,7 +91,6 @@ def test_cache_refresh_publishes_independently_of_sheets(tmp_path, monkeypatch, 
         subscribers_file=tmp_path / "subscribers.json", website_repo_url="test-only-remote",
     )
     monkeypatch.setattr(ThermalSeminarsSource, "fetch", lambda self: [Event(date(2026, 9, 21), "Talk", source="thermal")])
-    monkeypatch.setattr(BouncingSeminarSource, "fetch", lambda self: [])
     published = []
     def publish(self, snapshot):
         published.append(snapshot)

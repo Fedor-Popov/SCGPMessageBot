@@ -16,7 +16,6 @@ SERIES = {
     "thermal-seminar-sheet": "Thermal Seminar",
     "wednesday-seminar": "Wednesday Seminar",
     "journal-club": "Journal Club",
-    "bouncing-seminar": "Bouncing Seminar",
     "manual-events": "Additional Seminar",
 }
 

@@ -8,7 +8,6 @@ from events import Event
 from website import parse_schedule
 from sources.google_sheets import parse_rows
 from lunch import LunchCache, LunchItem, LunchMenu
-from sources.bouncing import BouncingSeminarSource
 from sources.manual import ManualEventSource
 from sheets_writer import GoogleSheetsCacheWriter, rows_for_events
 
@@ -37,6 +36,14 @@ def test_cache_round_trip(tmp_path: Path):
     talks = [Event(date(2026, 9, 15), "A Talk", speaker="A Speaker")]
     cache.save(talks)
     assert cache.load() == talks
+
+
+def test_cache_refresh_retains_previous_events(tmp_path: Path):
+    cache = EventCache(tmp_path / "talks.json")
+    old = Event(date(2026, 9, 10), "Old talk")
+    cache.save([old, Event(date(2026, 9, 20), "Replaced future")])
+    merged = cache.save_refresh([Event(date(2026, 9, 21), "New talk")], date(2026, 9, 18))
+    assert merged == [old, Event(date(2026, 9, 21), "New talk")]
 
 
 def test_week_start():
@@ -136,15 +143,6 @@ def test_lunch_cache_round_trip(tmp_path: Path):
     cache = LunchCache(tmp_path / "lunch.json")
     cache.save(menu)
     assert cache.load() == menu
-
-
-def test_bouncing_seminar_is_friday_in_common_room():
-    events = BouncingSeminarSource(12, start_date=date(2026, 9, 11)).fetch()
-    assert len(events) == 3
-    assert all(event.date.weekday() == 4 for event in events)
-    assert all(event.time == "11:00 AM" for event in events)
-    assert all(event.location == "Common Room" for event in events)
-    assert all(event.date < date(2026, 10, 1) for event in events)
 
 
 def test_manual_event_source_persists_and_replaces_duplicates(tmp_path: Path):

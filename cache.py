@@ -28,3 +28,11 @@ class EventCache:
         }
         self.path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
         self.path.chmod(0o600)
+
+    def save_refresh(self, fresh_events: list[Event], today: date) -> list[Event]:
+        """Replace current/upcoming data while retaining previously cached history."""
+        historical = [event for event in self.load() if event.date < today]
+        unique = {(event.date, event.title.casefold(), event.speaker.casefold()): event for event in historical + fresh_events}
+        merged = sorted(unique.values(), key=lambda event: (event.date, event.title.casefold(), event.speaker.casefold()))
+        self.save(merged)
+        return merged

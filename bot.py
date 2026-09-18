@@ -228,14 +228,13 @@ def format_lunch(menu: LunchMenu) -> str:
 
 def build_application(settings: Settings) -> Application:
     from sources.journal_club import JournalClubSource
-    from sources.bouncing import BouncingSeminarSource
     from sources.thermal import ThermalSeminarsSource
     from sources.wednesday import WednesdaySeminarSource
     from sources.manual import ManualEventSource
 
     manual_events = ManualEventSource(settings.manual_events_file)
     password_access = PasswordAccess()
-    sources = [ThermalSeminarsSource(settings.website_url), BouncingSeminarSource(), manual_events]
+    sources = [ThermalSeminarsSource(settings.website_url), manual_events]
     lunch_source = LessingsLunchSource(settings.lunch_menu_url)
     lunch_cache = LunchCache(settings.lunch_cache_file)
     if settings.wednesday_spreadsheet_ids:
@@ -249,10 +248,10 @@ def build_application(settings: Settings) -> Application:
         from sources.google_sheets import GoogleSheetsSource
         sources.append(GoogleSheetsSource(list(settings.additional_spreadsheet_ids), settings.google_token_file, source_name="additional-google-sheet"))
     cache = EventCache(settings.cache_file)
-    cache_writer = None
+    alessio_calendar = None
     if settings.cache_export_spreadsheet_id:
-        from sheets_writer import GoogleSheetsCacheWriter
-        cache_writer = GoogleSheetsCacheWriter(settings.cache_export_spreadsheet_id, settings.google_token_file)
+        from alessio_calendar import AlessioCalendar
+        alessio_calendar = AlessioCalendar(settings.cache_export_spreadsheet_id, settings.google_token_file)
     spreadsheet_sync_lock = asyncio.Lock()
     website_sync_lock = asyncio.Lock()
     website_publisher = SitePublisher(settings.website_repo_url) if settings.website_repo_url else None
@@ -407,7 +406,7 @@ def build_application(settings: Settings) -> Application:
         )
         await asyncio.to_thread(manual_events.add, event)
         await refresh(context, sync_spreadsheet=False)
-        if cache_writer is None:
+        if alessio_calendar is None:
             result = "Event saved locally, but the calendar spreadsheet is not configured."
         else:
             context.application.create_task(export_cache(context), name="manual-event-calendar-rebuild")
@@ -475,7 +474,7 @@ def build_application(settings: Settings) -> Application:
 
         await refresh(context, sync_spreadsheet=False)
         subject = deleted.title or deleted.description or deleted.speaker or "Untitled event"
-        if cache_writer is None:
+        if alessio_calendar is None:
             result = f"Deleted {subject}. The calendar spreadsheet is not configured."
         else:
             context.application.create_task(export_cache(context), name="manual-event-deletion-calendar-rebuild")
@@ -536,8 +535,7 @@ def build_application(settings: Settings) -> Application:
             if not events:
                 raise RuntimeError("All event sources failed or returned no events")
             unique = {(event.date, event.title.lower(), event.speaker.lower()): event for event in events}
-            cached_events = sorted(unique.values(), key=lambda event: (event.date, event.title.lower()))
-            cache.save(cached_events)
+            cached_events = cache.save_refresh(list(unique.values()), datetime.now(timezone).date())
             LOG.info("Refreshed %d events from %d sources into %s", len(unique), len(sources), settings.cache_file)
             if website_publisher is not None:
                 context.application.create_task(publish_website())
@@ -547,14 +545,14 @@ def build_application(settings: Settings) -> Application:
             LOG.exception("Weekly seminar refresh failed; retaining existing cache")
 
     async def sync_events(events: list[Event]) -> bool:
-        if cache_writer is None:
+        if alessio_calendar is None:
             return False
         try:
             if not events:
                 LOG.warning("No events supplied; skipping Google Sheets export")
                 return False
             async with spreadsheet_sync_lock:
-                added_count = await asyncio.to_thread(cache_writer.write, events)
+                added_count = await asyncio.to_thread(alessio_calendar.sync, events)
             LOG.info("Rebuilt the spreadsheet with %d event rows", added_count)
             return True
         except Exception:
