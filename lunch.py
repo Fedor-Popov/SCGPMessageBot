@@ -62,6 +62,9 @@ class LessingsLunchSource:
         soup = BeautifulSoup(response.text, "html.parser")
         menu_box = soup.select_one(".menu_box")
         if menu_box is None:
+            menu_grid = soup.select_one("#menu_items .menu_grid")
+            if menu_grid is not None and "no items posted" in menu_grid.get_text(" ", strip=True).lower():
+                return LunchMenu(date.today(), ())
             raise ValueError("Lessings page does not contain a menu")
         header = menu_box.select_one(".menu_header h2")
         if header is None:

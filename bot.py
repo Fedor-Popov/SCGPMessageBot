@@ -267,7 +267,8 @@ def build_application(settings: Settings) -> Application:
         sources.append(GoogleSheetsSource(list(settings.additional_spreadsheet_ids), settings.google_token_file, source_name="additional-google-sheet"))
     cache = EventCache(settings.cache_file)
     alessio_calendar = None
-    if settings.cache_export_spreadsheet_id:
+    alessio_enabled = os.getenv("ALESSIO_CALENDAR_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+    if alessio_enabled and settings.cache_export_spreadsheet_id:
         from alessio_calendar import AlessioCalendar
         alessio_calendar = AlessioCalendar(settings.cache_export_spreadsheet_id, settings.google_token_file)
     google_calendar = None
@@ -514,6 +515,8 @@ def build_application(settings: Settings) -> Application:
             menu = await asyncio.to_thread(lunch_source.fetch)
             lunch_cache.save(menu)
             LOG.info("Refreshed lunch menu for %s into %s", menu.date, settings.lunch_cache_file)
+        except ValueError as exc:
+            LOG.warning("Lunch menu unavailable; retaining existing cache: %s", exc)
         except Exception:
             LOG.exception("Lunch menu refresh failed; retaining existing cache")
 
