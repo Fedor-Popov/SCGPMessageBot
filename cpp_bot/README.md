@@ -26,6 +26,11 @@ Google account that can read the sheets:
 gcloud auth application-default login --no-browser
 ```
 
+Alternatively, copy the Python bot's authorized `google-token.json` to the
+repository root. When run from `cpp_bot`, the native bot reads
+`../google-token.json` and refreshes it through Google OAuth. Set
+`GOOGLE_OAUTH_TOKEN_FILE` in `.env` if the file is elsewhere.
+
 To enable protected native `/add` and `/delete`, store a SHA-256 digest in
 `CPP_ADMIN_PASSWORD_SHA256`. For example, `printf ADSCFT | sha256sum` produces
 the digest to place in `.env`.

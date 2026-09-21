@@ -126,7 +126,17 @@ std::string sha256(const std::string& text) {
 }
 
 std::string token() {
-    auto value = get("GOOGLE_ACCESS_TOKEN"); if (!value.empty()) return value; FILE* pipe = popen("gcloud auth application-default print-access-token 2>/dev/null", "r"); if (!pipe) return ""; char buffer[256]; while (fgets(buffer, sizeof(buffer), pipe)) value += buffer; pclose(pipe); while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) value.pop_back(); return value;
+    auto value = get("GOOGLE_ACCESS_TOKEN"); if (!value.empty()) return value;
+    std::ifstream file(get("GOOGLE_OAUTH_TOKEN_FILE", "../google-token.json")); std::stringstream contents; contents << file.rdbuf();
+    if (!contents.str().empty()) try {
+        auto credentials = Json::parse(contents.str()); auto refresh = credentials["refresh_token"].str(); auto client_id = credentials["client_id"].str(); auto client_secret = credentials["client_secret"].str();
+        if (!refresh.empty() && !client_id.empty()) {
+            auto form = "client_id=" + encode(client_id) + "&client_secret=" + encode(client_secret) + "&refresh_token=" + encode(refresh) + "&grant_type=refresh_token";
+            auto refreshed = Json::parse(request("https://oauth2.googleapis.com/token", form, {"Content-Type: application/x-www-form-urlencoded"}))["access_token"].str(); if (!refreshed.empty()) return refreshed;
+        }
+        value = credentials["token"].str(); if (!value.empty()) return value;
+    } catch (...) {}
+    FILE* pipe = popen("gcloud auth application-default print-access-token 2>/dev/null", "r"); if (!pipe) return ""; char buffer[256]; while (fgets(buffer, sizeof(buffer), pipe)) value += buffer; pclose(pipe); while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) value.pop_back(); return value;
 }
 std::string row_cell(const Json& row, size_t index) { return index < row.arr().size() ? row.arr()[index].str() : ""; }
 std::vector<Event> sheet(const std::string& id, const std::string& source, const std::string& default_time, const std::string& default_location) {
