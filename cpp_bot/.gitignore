@@ -1,7 +1,0 @@
-build/
-.env
-talks-cache.json
-subscribers.json
-manual-events.json
-lunch-cache.txt
-google-calendar.json
