@@ -513,6 +513,9 @@ def build_application(settings: Settings) -> Application:
     async def refresh_lunch(context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             menu = await asyncio.to_thread(lunch_source.fetch)
+            if not menu.sections:
+                LOG.warning("Lessings has no menu items; retaining existing cache")
+                return
             lunch_cache.save(menu)
             LOG.info("Refreshed lunch menu for %s into %s", menu.date, settings.lunch_cache_file)
         except ValueError as exc:
