@@ -3,7 +3,9 @@
 This is an additional implementation of the bot. The existing Python bot is
 unchanged. This directory builds a single native executable with Telegram
 long polling, schedule commands/buttons, local caching, Thermal Seminars and
-YITP calendar readers, Google Sheets input, and Monday announcements.
+YITP calendar readers, Google Sheets input, protected `/add` and `/delete`,
+direct cached LIRR searches, Monday announcements, public Google Calendar
+rebuilds, and GitHub Pages schedule publishing.
 
 ## Ubuntu installation
 
@@ -31,7 +33,6 @@ the digest to place in `.env`.
 The executable uses the current directory for cache and data files. `make
 build` only compiles; it does not start Telegram.
 
-The public schedule readers and Telegram schedule behavior are implemented in
-C++. The Python deployment remains available for the advanced protected
-`/add` and `/delete` workflow, LIRR route planning, and Google Calendar/Alessio
-write integrations while those integrations are migrated separately.
+The native LIRR search reports direct trips from the cached GTFS feed. The
+native Google Sheets reader, Alessio spreadsheet rebuild, Google Calendar
+writer, and website publisher are independent of the Python deployment.
