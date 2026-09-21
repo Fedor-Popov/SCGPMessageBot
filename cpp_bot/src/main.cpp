@@ -171,7 +171,7 @@ std::vector<Event> thermal() {
 
 std::vector<Event> load_cache(const std::string& path) {
     std::ifstream file(path); if (!file) return {}; std::stringstream text; text << file.rdbuf(); std::vector<Event> out;
-    try { for (const auto& item : Json::parse(text.str())["events"].arr()) out.push_back({item["date"].str(), item["title"].str(), item["speaker"].str(), item["affiliation"].str(), item["time"].str(), item["location"].str(), item["description"].str(), item["link"].str(), item["source"].str()}); } catch (...) {} return out;
+    try { auto document = Json::parse(text.str()); for (const auto& item : document["events"].arr()) out.push_back({item["date"].str(), item["title"].str(), item["speaker"].str(), item["affiliation"].str(), item["time"].str(), item["location"].str(), item["description"].str(), item["link"].str(), item["source"].str()}); } catch (...) {} return out;
 }
 void save_cache(const std::string& path, const std::vector<Event>& events) {
     std::ofstream file(path); file << "{\"updated_at\":\"" << today() << "T00:00:00\",\"events\":["; for (size_t i = 0; i < events.size(); ++i) { if (i) file << ','; const auto& e = events[i]; file << "{\"date\":\"" << json_escape(e.date) << "\",\"title\":\"" << json_escape(e.title) << "\",\"speaker\":\"" << json_escape(e.speaker) << "\",\"affiliation\":\"" << json_escape(e.affiliation) << "\",\"time\":\"" << json_escape(e.time) << "\",\"location\":\"" << json_escape(e.location) << "\",\"description\":\"" << json_escape(e.description) << "\",\"link\":\"" << json_escape(e.link) << "\",\"source\":\"" << json_escape(e.source) << "\"}"; } file << "]}\n";
