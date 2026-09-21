@@ -9,7 +9,7 @@ YITP calendar readers, Google Sheets input, and Monday announcements.
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential libcurl4-openssl-dev pkg-config
+sudo apt install -y build-essential libcurl4-openssl-dev libssl-dev pkg-config
 cd ~/SCGPMessageBot/cpp_bot
 make build
 cp .env.example .env
@@ -23,6 +23,10 @@ Google account that can read the sheets:
 ```bash
 gcloud auth application-default login --no-browser
 ```
+
+To enable protected native `/add` and `/delete`, store a SHA-256 digest in
+`CPP_ADMIN_PASSWORD_SHA256`. For example, `printf ADSCFT | sha256sum` produces
+the digest to place in `.env`.
 
 The executable uses the current directory for cache and data files. `make
 build` only compiles; it does not start Telegram.

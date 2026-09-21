@@ -1,4 +1,9 @@
 #include <curl/curl.h>
+#ifdef __APPLE__
+#include <CommonCrypto/CommonDigest.h>
+#else
+#include <openssl/sha.h>
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -82,10 +87,11 @@ void load_env() {
     while (std::getline(file, line)) { if (line.empty() || line[0] == '#') continue; auto equal = line.find('='); if (equal == std::string::npos) continue; auto key = line.substr(0, equal); auto value = line.substr(equal + 1); if (value.size() >= 2 && value.front() == '"' && value.back() == '"') value = value.substr(1, value.size() - 2); settings[key] = value; }
 }
 size_t write_body(char* ptr, size_t size, size_t count, void* target) { static_cast<std::string*>(target)->append(ptr, size * count); return size * count; }
-std::string request(const std::string& url, const std::string& post = "", const std::vector<std::string>& headers = {}) {
+std::string request(const std::string& url, const std::string& post = "", const std::vector<std::string>& headers = {}, const std::string& method = "") {
     CURL* curl = curl_easy_init(); if (!curl) throw std::runtime_error("libcurl unavailable"); std::string body; curl_slist* list = nullptr;
     for (const auto& h : headers) list = curl_slist_append(list, h.c_str()); if (!list) list = curl_slist_append(list, "Accept: */*");
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str()); curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_body); curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body); curl_easy_setopt(curl, CURLOPT_HTTPHEADER, list); curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L); curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L); curl_easy_setopt(curl, CURLOPT_USERAGENT, "SCGPMessageBot-cpp/1.0");
+    if (method == "DELETE") curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
     if (!post.empty()) { curl_easy_setopt(curl, CURLOPT_POST, 1L); curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post.c_str()); }
     auto code = curl_easy_perform(curl); long status = 0; curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status); curl_slist_free_all(list); curl_easy_cleanup(curl);
     if (code != CURLE_OK) throw std::runtime_error(curl_easy_strerror(code)); if (status >= 400) throw std::runtime_error("HTTP " + std::to_string(status) + ": " + body.substr(0, 300)); return body;
@@ -107,6 +113,14 @@ std::string date_value(std::string value) {
     return "";
 }
 std::string json_escape(const std::string& text) { std::string out; for (char c : text) { if (c == '"') out += "\\\""; else if (c == '\\') out += "\\\\"; else if (c == '\n') out += "\\n"; else if (c == '\r') out += "\\r"; else out += c; } return out; }
+std::string sha256(const std::string& text) {
+#ifdef __APPLE__
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH]; CC_SHA256(text.data(), static_cast<CC_LONG>(text.size()), digest); constexpr size_t length = CC_SHA256_DIGEST_LENGTH;
+#else
+    unsigned char digest[SHA256_DIGEST_LENGTH]; SHA256(reinterpret_cast<const unsigned char*>(text.data()), text.size(), digest); constexpr size_t length = SHA256_DIGEST_LENGTH;
+#endif
+    std::ostringstream out; for (size_t i = 0; i < length; ++i) out << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(digest[i]); return out.str();
+}
 
 std::string token() {
     auto value = get("GOOGLE_ACCESS_TOKEN"); if (!value.empty()) return value; FILE* pipe = popen("gcloud auth application-default print-access-token 2>/dev/null", "r"); if (!pipe) return ""; char buffer[256]; while (fgets(buffer, sizeof(buffer), pipe)) value += buffer; pclose(pipe); while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) value.pop_back(); return value;
@@ -156,8 +170,29 @@ std::string talks(std::vector<Event> events, const std::string& heading) {
     return out.str();
 }
 
+std::string calendar_id_from_state() {
+    auto configured = get("GOOGLE_CALENDAR_ID"); if (!configured.empty()) return configured;
+    std::ifstream file(get("GOOGLE_CALENDAR_STATE_FILE", "google-calendar.json")); std::stringstream text; text << file.rdbuf(); auto value = text.str(); std::smatch match; return std::regex_search(value, match, std::regex("\\\"calendar_id\\\"\\s*:\\s*\\\"([^\\\"]+)")) ? match[1].str() : "";
+}
+void save_calendar_id(const std::string& id) { std::ofstream file(get("GOOGLE_CALENDAR_STATE_FILE", "google-calendar.json")); file << "{\"calendar_id\":\"" << json_escape(id) << "\"}\n"; }
+std::string calendar_body(const Event& event) {
+    auto summary = event.title.empty() ? (event.speaker.empty() ? "SCGP Seminar" : event.speaker) : event.title; std::string body = "{\"summary\":\"" + json_escape(summary) + "\",\"extendedProperties\":{\"private\":{\"scgpManaged\":\"true\"}}";
+    std::string description; if (!event.speaker.empty()) description += "Speaker: " + event.speaker + (event.affiliation.empty() ? "" : " (" + event.affiliation + ")") + "\\n\\n"; description += event.description; if (!description.empty()) body += ",\"description\":\"" + json_escape(description) + "\""; if (!event.location.empty()) body += ",\"location\":\"" + json_escape(event.location) + "\"";
+    std::tm tm{}; std::istringstream(event.date) >> std::get_time(&tm, "%Y-%m-%d"); std::string start = event.date + "T00:00:00"; std::string end = add_days(event.date, 1); if (!event.time.empty()) { std::tm time_tm{}; std::istringstream(event.time) >> std::get_time(&time_tm, "%I:%M %p"); if (time_tm.tm_hour == 0 && time_tm.tm_min == 0) std::istringstream(event.time) >> std::get_time(&time_tm, "%H:%M"); std::ostringstream value; value << event.date << 'T' << std::setw(2) << std::setfill('0') << time_tm.tm_hour << ':' << std::setw(2) << time_tm.tm_min << ":00"; start = value.str(); std::tm finish = time_tm; finish.tm_hour += 1; value.str(""); value.clear(); value << event.date << 'T' << std::setw(2) << std::setfill('0') << finish.tm_hour << ':' << std::setw(2) << finish.tm_min << ":00"; end = value.str(); body += ",\"start\":{\"dateTime\":\"" + start + "\",\"timeZone\":\"" + json_escape(get("BOT_TIMEZONE", "America/New_York")) + "\"},\"end\":{\"dateTime\":\"" + end + "\",\"timeZone\":\"" + json_escape(get("BOT_TIMEZONE", "America/New_York")) + "\"}"; } else body += ",\"start\":{\"date\":\"" + event.date + "\"},\"end\":{\"date\":\"" + end + "\"}";
+    return body + "}";
+}
+void sync_google_calendar(const std::vector<Event>& events) {
+    if (lower(get("GOOGLE_CALENDAR_ENABLED")) != "true" && get("GOOGLE_CALENDAR_ENABLED") != "1") return; auto access = token(); if (access.empty()) throw std::runtime_error("Google Calendar access token unavailable"); std::vector<std::string> auth{"Authorization: Bearer " + access, "Content-Type: application/json"}; auto id = calendar_id_from_state();
+    if (id.empty()) { auto result = Json::parse(request("https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=250", "", {"Authorization: Bearer " + access})); for (const auto& item : result["items"].arr()) if (item["summary"].str() == get("GOOGLE_CALENDAR_NAME", "SCGP Seminars")) id = item["id"].str(); }
+    if (id.empty()) { auto body = "{\"summary\":\"" + json_escape(get("GOOGLE_CALENDAR_NAME", "SCGP Seminars")) + "\",\"description\":\"SCGP and YITP Seminars\",\"timeZone\":\"" + json_escape(get("BOT_TIMEZONE", "America/New_York")) + "\"}"; id = Json::parse(request("https://www.googleapis.com/calendar/v3/calendars", body, auth))["id"].str(); auto acl = "{\"scope\":{\"type\":\"default\"},\"role\":\"reader\"}"; request("https://www.googleapis.com/calendar/v3/calendars/" + encode(id) + "/acl?sendNotifications=false", acl, auth); save_calendar_id(id); std::cerr << "Created public Google Calendar\n"; }
+    auto old = Json::parse(request("https://www.googleapis.com/calendar/v3/calendars/" + encode(id) + "/events?privateExtendedProperty=scgpManaged%3Dtrue&maxResults=2500", "", {"Authorization: Bearer " + access})); for (const auto& item : old["items"].arr()) if (!item["id"].str().empty()) request("https://www.googleapis.com/calendar/v3/calendars/" + encode(id) + "/events/" + encode(item["id"].str()), "", {"Authorization: Bearer " + access}, "DELETE");
+    for (const auto& event : events) if (!event.title.empty() || !event.description.empty()) request("https://www.googleapis.com/calendar/v3/calendars/" + encode(id) + "/events", calendar_body(event), auth); std::cerr << "Rebuilt the public Google Calendar with " << events.size() << " events\n";
+}
+
 class Bot {
     std::string bot_token = get("TELEGRAM_BOT_TOKEN"), cache_file = get("TALKS_CACHE_FILE", "talks-cache.json"), subscriber_file = get("SUBSCRIBERS_FILE", "subscribers.json");
+    struct Pending { int step = 0; Event event; std::string title_to_delete; };
+    std::map<long long, Pending> pending;
     std::vector<Event> events; std::set<long long> subscribers; long long offset = 0; std::chrono::steady_clock::time_point refreshed{}; std::string announced;
     std::string api(const std::string& method, const std::string& form = "") { return request("https://api.telegram.org/bot" + bot_token + "/" + method, form); }
     std::string keyboard() const { return R"({"inline_keyboard":[[{"text":"Today","callback_data":"today"},{"text":"This week","callback_data":"week"}],[{"text":"Next week","callback_data":"nextweek"},{"text":"Lunch","callback_data":"lunch"}],[{"text":"Help","callback_data":"help"}]]})"; }
@@ -171,9 +206,24 @@ class Bot {
         for (const auto& id : csv(get("GOOGLE_WEDNESDAY_SPREADSHEET_IDS"))) source([&] { return sheet(id, "wednesday-seminar", "2:00 PM", "313"); });
         for (const auto& id : csv(get("GOOGLE_JOURNAL_CLUB_SPREADSHEET_IDS"))) source([&] { return sheet(id, "journal-club", "2:00 PM", "SCGP Common Room"); });
         for (const auto& id : csv(get("GOOGLE_THERMAL_SPREADSHEET_IDS"))) source([&] { return sheet(id, "thermal-seminar-sheet", "11:00 AM", "102"); });
-        std::set<Event> unique; for (const auto& e : load_cache(cache_file)) if (e.date < today()) unique.insert(e); for (const auto& e : fetched) unique.insert(e); events.assign(unique.begin(), unique.end()); save_cache(cache_file, events); refreshed = std::chrono::steady_clock::now(); std::cerr << "Refreshed " << events.size() << " events\n";
+        std::set<Event> unique; for (const auto& e : load_cache(cache_file)) if (e.date < today()) unique.insert(e); for (const auto& e : load_cache(get("MANUAL_EVENTS_FILE", "manual-events.json"))) unique.insert(e); for (const auto& e : fetched) unique.insert(e); events.assign(unique.begin(), unique.end()); save_cache(cache_file, events); try { sync_google_calendar(events); } catch (const std::exception& e) { std::cerr << "Google Calendar sync failed: " << e.what() << '\n'; } refreshed = std::chrono::steady_clock::now(); std::cerr << "Refreshed " << events.size() << " events\n";
+    }
+    bool password_ok(const std::string& password) const { auto expected = get("CPP_ADMIN_PASSWORD_SHA256"); return !expected.empty() && sha256(password) == lower(expected); }
+    void save_manual(const std::vector<Event>& manual) { save_cache(get("MANUAL_EVENTS_FILE", "manual-events.json"), manual); }
+    void manual_message(long long chat, std::string text) {
+        auto& state = pending[chat]; auto value = text == "-" ? "" : text;
+        if (state.step == 1) { if (!password_ok(text)) { pending.erase(chat); send(chat, "Incorrect password."); return; } state.step = 2; send(chat, "Enter the date (YYYY-MM-DD):"); return; }
+        if (state.step == 2) { state.event.date = date_value(value); if (state.event.date.empty()) { send(chat, "Invalid date. Enter YYYY-MM-DD:"); return; } state.step = 3; send(chat, "Enter the title, or - for blank:"); return; }
+        if (state.step == 3) { state.event.title = value; state.step = 4; send(chat, "Enter the speaker name, or - for blank:"); return; }
+        if (state.step == 4) { state.event.speaker = value; state.step = 5; send(chat, "Enter the abstract, or - for blank:"); return; }
+        if (state.step == 5) { state.event.description = value; state.step = 6; send(chat, "Enter the time, or - for blank:"); return; }
+        if (state.step == 6) { state.event.time = value; state.step = 7; send(chat, "Enter the location, or - for blank:"); return; }
+        if (state.step == 7) { state.event.location = value; state.event.source = "manual-events"; auto manual = load_cache(get("MANUAL_EVENTS_FILE", "manual-events.json")); manual.erase(std::remove_if(manual.begin(), manual.end(), [&](const Event& e) { return e.date == state.event.date && e.title == state.event.title && e.speaker == state.event.speaker; }), manual.end()); manual.push_back(state.event); save_manual(manual); pending.erase(chat); refresh(); send(chat, "Event added."); return; }
+        if (state.step == 8) { if (!password_ok(text)) { pending.erase(chat); send(chat, "Incorrect password."); return; } state.step = 9; send(chat, "Enter the title of the future manual event to delete:"); return; }
+        if (state.step == 9) { auto manual = load_cache(get("MANUAL_EVENTS_FILE", "manual-events.json")); auto before = manual.size(); manual.erase(std::remove_if(manual.begin(), manual.end(), [&](const Event& e) { return e.date >= today() && e.title == text; }), manual.end()); save_manual(manual); pending.erase(chat); refresh(); send(chat, before == manual.size() ? "No matching future event found." : "Event deleted."); }
     }
     void handle_command(long long chat, std::string text) {
+        if (pending.count(chat) && !text.empty() && text.front() != '/') { manual_message(chat, text); return; }
         auto space = text.find(' '); if (space != std::string::npos) text = text.substr(0, space); text = lower(text);
         if (text == "/start") { subscribers.insert(chat); save_subscribers(); send(chat, "Subscribed to Monday announcements."); }
         else if (text == "/stop") { subscribers.erase(chat); save_subscribers(); send(chat, "Unsubscribed from announcements."); }
@@ -182,7 +232,9 @@ class Bot {
         else if (text == "/nextweek") { auto start = add_days(monday(today()), 7); send(chat, talks(range(start, add_days(start, 7)), "Next week")); }
         else if (text == "/help") send(chat, "Use /today, /week, /nextweek, or /lunch. /start subscribes to Monday announcements; /stop unsubscribes.");
         else if (text == "/lunch") { try { auto menu = request(get("LUNCH_MENU_URL", "https://www.lessings.com/my/lfsm/weekly-menu/simons-center")); menu = std::regex_replace(menu, std::regex("<[^>]*>"), " "); send(chat, "<b>Lunch menu</b>\n\n" + escape_html(menu.substr(0, 3500))); } catch (...) { send(chat, "Lunch menu is temporarily unavailable."); } }
-        else if (text == "/add" || text == "/delete" || text == "/trains") send(chat, "This C++ build currently supports schedule reading and announcements. Use the Python bot for protected event editing and LIRR route planning.");
+        else if (text == "/add") { pending[chat] = Pending{1, Event{}, ""}; send(chat, "Enter the admin password:"); }
+        else if (text == "/delete") { pending[chat] = Pending{8, Event{}, ""}; send(chat, "Enter the admin password:"); }
+        else if (text == "/trains") send(chat, "LIRR route planning is not yet enabled in the native build.");
         else send(chat, "Use /today, /week, /nextweek, or /lunch.");
     }
     void callback(const Json& query) {
