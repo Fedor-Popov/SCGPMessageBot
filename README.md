@@ -59,6 +59,12 @@ The Sheets can use headers named `Dates`/`Date`, `Name`/`Speaker`, `Talk Title`/
 
 Use `GOOGLE_ADDITIONAL_SPREADSHEET_IDS` for additional input sheets. Set `GOOGLE_CACHE_EXPORT_SPREADSHEET_ID` to Alessio's Google Calendar-style output sheet. During each sync, the bot sets every existing `Publish` checkbox to false, waits two minutes, clears the sheet, and rebuilds it from the complete local event cache with `Publish` checked. Events are exported only when a title or description is present. `Start` and `End` use formulas such as `=DATE(2026;9;11)+TIME(11;0;0)`. For backward compatibility, if the export variable is empty, the first additional spreadsheet ID is used as the output sheet. Set `ALESSIO_CALENDAR_ENABLED=false` to pause this integration without disabling the other event sources or the public Google Calendar.
 
+## Operational email reminders
+
+Set `EMAIL_REMINDERS_ENABLED=true` and configure an SMTP account in `.env` to send a test email to `fpopov@scgp.stonybrook.edu` whenever the bot starts. The bot also sends a Monday 6 PM Eastern reminder to Fedor Popov, Alexander Frenkel, and Alessio Miscioscia asking them to send the week's mailing-list announcement. Use `REMINDER_EMAIL_HOUR` to change the time and `REMINDER_EMAIL_RECIPIENTS` to change the recipients.
+
+For a Gmail sender, use `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_USE_TLS=true`, the sender address as `SMTP_FROM`/`SMTP_USERNAME`, and a Google App Password as `SMTP_PASSWORD`. Do not commit `.env` or share the SMTP password.
+
 For a terminal-only server, the simplest authentication is Google Application Default Credentials. Run this once as the Google account that can read the sheets:
 
 ```bash

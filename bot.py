@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 from access import PasswordAccess
 from cache import EventCache
 from dotenv import load_dotenv
+from email_reminders import EmailReminderSender, SMTPSettings
 from events import Event
 from site_publisher import SitePublisher, public_snapshot
 from lunch import LessingsLunchSource, LunchCache, LunchMenu
@@ -59,18 +60,25 @@ class Settings:
     announcement_hour: int
     subscribers_file: Path
     yitp_calendar_url: str = "https://calendar.google.com/calendar/ical/cal%40max2.physics.sunysb.edu/public/basic.ics"
-    cache_export_spreadsheet_id: str
-    google_token_file: Path
-    timezone: str
-    refresh_hour: int
-    refresh_interval_hours: int
-    announcement_hour: int
-    subscribers_file: Path
     website_repo_url: str = ""
     google_calendar_enabled: bool = False
     google_calendar_id: str = ""
     google_calendar_name: str = "SCGP Seminars"
     google_calendar_state_file: Path = Path("google-calendar.json")
+    email_reminders_enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_use_tls: bool = True
+    reminder_email_hour: int = 18
+    reminder_email_recipients: tuple[str, ...] = (
+        "fpopov@scgp.stonybrook.edu",
+        "frenkelalexander1@gmail.com",
+        "alessio.miscioscia@stonybrook.edu",
+    )
+    email_test_recipient: str = "fpopov@scgp.stonybrook.edu"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -81,6 +89,10 @@ class Settings:
         journal_ids = tuple(value.strip() for value in os.getenv("GOOGLE_JOURNAL_CLUB_SPREADSHEET_IDS", "").split(",") if value.strip())
         thermal_ids = tuple(value.strip() for value in os.getenv("GOOGLE_THERMAL_SPREADSHEET_IDS", "").split(",") if value.strip())
         additional_ids = tuple(value.strip() for value in os.getenv("GOOGLE_ADDITIONAL_SPREADSHEET_IDS", "").split(",") if value.strip())
+        reminder_recipients = tuple(value.strip() for value in os.getenv(
+            "REMINDER_EMAIL_RECIPIENTS",
+            "fpopov@scgp.stonybrook.edu,frenkelalexander1@gmail.com,alessio.miscioscia@stonybrook.edu",
+        ).split(",") if value.strip())
         export_id = os.getenv("GOOGLE_CACHE_EXPORT_SPREADSHEET_ID", "").strip() or (additional_ids[0] if additional_ids else "")
         additional_ids = tuple(value for value in additional_ids if value != export_id)
         if spreadsheet_ids and not (wednesday_ids or journal_ids or thermal_ids):
@@ -112,6 +124,16 @@ class Settings:
             google_calendar_id=os.getenv("GOOGLE_CALENDAR_ID", "").strip(),
             google_calendar_name=os.getenv("GOOGLE_CALENDAR_NAME", "SCGP Seminars").strip() or "SCGP Seminars",
             google_calendar_state_file=Path(os.getenv("GOOGLE_CALENDAR_STATE_FILE", "google-calendar.json")),
+            email_reminders_enabled=os.getenv("EMAIL_REMINDERS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"},
+            smtp_host=os.getenv("SMTP_HOST", "").strip(),
+            smtp_port=int(os.getenv("SMTP_PORT", "587")),
+            smtp_username=os.getenv("SMTP_USERNAME", "").strip(),
+            smtp_password=os.getenv("SMTP_PASSWORD", ""),
+            smtp_from=os.getenv("SMTP_FROM", "").strip(),
+            smtp_use_tls=os.getenv("SMTP_USE_TLS", "true").strip().lower() in {"1", "true", "yes", "on"},
+            reminder_email_hour=int(os.getenv("REMINDER_EMAIL_HOUR", "18")),
+            reminder_email_recipients=reminder_recipients,
+            email_test_recipient=os.getenv("EMAIL_TEST_RECIPIENT", "fpopov@scgp.stonybrook.edu").strip(),
         )
 
 
@@ -295,6 +317,14 @@ def build_application(settings: Settings) -> Application:
     }
     subscribers = SubscriberStore(settings.subscribers_file)
     timezone = ZoneInfo(settings.timezone)
+    email_sender = EmailReminderSender(SMTPSettings(
+        host=settings.smtp_host,
+        port=settings.smtp_port,
+        username=settings.smtp_username,
+        password=settings.smtp_password,
+        sender=settings.smtp_from,
+        use_tls=settings.smtp_use_tls,
+    ))
 
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_chat:
@@ -621,6 +651,30 @@ def build_application(settings: Settings) -> Application:
             except Exception:
                 LOG.exception("Could not send weekly announcement to chat %s", chat_id)
 
+    async def send_startup_email_test(context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            await asyncio.to_thread(
+                email_sender.send,
+                (settings.email_test_recipient,),
+                "SCGP Message Bot email test",
+                "This is a test email from the SCGP Message Bot. Email reminders are configured.",
+            )
+            LOG.info("Sent startup email test")
+        except Exception:
+            LOG.exception("Could not send startup email test")
+
+    async def send_monday_email_reminder(context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            await asyncio.to_thread(
+                email_sender.send,
+                settings.reminder_email_recipients,
+                "Reminder: send this week's SCGP seminar mailing-list announcement",
+                "Reminder: please send this week's SCGP seminar announcement to the mailing list.",
+            )
+            LOG.info("Sent Monday mailing-list reminder to %d recipients", len(settings.reminder_email_recipients))
+        except Exception:
+            LOG.exception("Could not send Monday mailing-list reminder")
+
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(
             "Choose a button below, or use /today, /week, /nextweek, /lunch, /trains, /add, or /delete. /trains shows LIRR departures in the next 3 hours. NYC means Penn Station. /add and /delete require the password in a private chat. /start subscribes to Monday announcements; /stop unsubscribes; /cancel stops event entry.",
@@ -672,6 +726,17 @@ def build_application(settings: Settings) -> Application:
     )
     application.job_queue.run_daily(weekly_announcement, time=time(settings.announcement_hour, 0, tzinfo=timezone), days=(1,), name="weekly-talks")
     application.job_queue.run_daily(export_cache, time=time(1, 0, tzinfo=timezone), name="daily-cache-export")
+    if settings.email_reminders_enabled:
+        if not email_sender.settings.configured:
+            LOG.warning("Email reminders are enabled but SMTP_HOST or SMTP_FROM is not configured")
+        else:
+            application.job_queue.run_daily(
+                send_monday_email_reminder,
+                time=time(settings.reminder_email_hour, 0, tzinfo=timezone),
+                days=(1,),
+                name="monday-email-reminder",
+            )
+            application.job_queue.run_once(send_startup_email_test, when=timedelta(seconds=2), name="startup-email-test")
     # Refresh once at every startup so newly configured sources are included
     # immediately; the regular Saturday job keeps the cache current afterward.
     application.job_queue.run_once(refresh, when=timedelta(seconds=1), name="initial-refresh-and-export")
