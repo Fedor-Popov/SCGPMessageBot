@@ -68,6 +68,7 @@ def test_multiple_talks_and_missing_optional_fields():
 
 def test_recipient_lists_are_exact_and_distinct():
     expected = """
+    fpopov@scgp.stonybrook.edu
     zeqi.zhang@stonybrook.edu nnekrasov@scgp.stonybrook.edu siwei.zhong@stonybrook.edu
     zkomargodski@scgp.stonybrook.edu aabanov@scgp.stonybrook.edu leonardo.rastelli@gmail.com
     martin.rocek@stonybrook.edu anirudh.deb@stonybrook.edu yaman.sanghavi@stonybrook.edu
@@ -81,7 +82,7 @@ def test_recipient_lists_are_exact_and_distinct():
     alessio.miscioscia@stonybrook.edu mnocchi@scgp.stonybrook.edu arkya.chat@gmail.com
     joseph.helfer@gmail.com msacchi@scgp.stonybrook.edu
     """.split()
-    assert len(SEMINAR_RECIPIENTS) == len(set(SEMINAR_RECIPIENTS)) == 36
+    assert len(SEMINAR_RECIPIENTS) == len(set(SEMINAR_RECIPIENTS)) == 37
     assert set(SEMINAR_RECIPIENTS) == set(expected)
     assert SEMINAR_TEST_RECIPIENTS == (
         "fpopov@scgp.stonybrook.edu", "frenkelalexander1@gmail.com", "alessio.miscioscia@stonybrook.edu",

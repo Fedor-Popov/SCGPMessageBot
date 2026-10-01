@@ -10,6 +10,7 @@ from events import Event
 
 
 SEMINAR_RECIPIENTS = (
+    "fpopov@scgp.stonybrook.edu",
     "zeqi.zhang@stonybrook.edu",
     "nnekrasov@scgp.stonybrook.edu",
     "siwei.zhong@stonybrook.edu",

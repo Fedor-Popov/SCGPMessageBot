@@ -69,7 +69,7 @@ For a Gmail sender, use `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_USE_T
 
 In a private chat, send one of these commands, then enter the same password used for `/add` and `/delete` when prompted:
 
-- `/seminarreminderwed` sends this week's Wednesday Seminar email to the 36-address seminar mailing list.
+- `/seminarreminderwed` sends this week's Wednesday Seminar email to the 37-address seminar mailing list, including Fedor Popov at `fpopov@scgp.stonybrook.edu`.
 - `/seminarreminderthur` sends this week's Thursday Journal Club email to the same list.
 - `/seminarremindertest` sends both announcement previews as separate `[TEST]` emails only to `fpopov@scgp.stonybrook.edu`, `frenkelalexander1@gmail.com`, and `alessio.miscioscia@stonybrook.edu`.
 
