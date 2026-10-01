@@ -8,6 +8,15 @@ import smtplib
 import ssl
 
 
+class PartialEmailDeliveryError(RuntimeError):
+    """SMTP accepted the email for only some of the requested recipients."""
+
+    def __init__(self, accepted_count: int, refused_count: int) -> None:
+        self.accepted_count = accepted_count
+        self.refused_count = refused_count
+        super().__init__(f"SMTP accepted {accepted_count} recipients and refused {refused_count}")
+
+
 @dataclass(frozen=True)
 class SMTPSettings:
     host: str
@@ -46,4 +55,6 @@ class EmailReminderSender:
                 client.starttls(context=ssl.create_default_context())
             if self.settings.username:
                 client.login(self.settings.username, self.settings.password)
-            client.send_message(message)
+            refused = client.send_message(message)
+            if refused:
+                raise PartialEmailDeliveryError(len(addresses) - len(refused), len(refused))

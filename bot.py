@@ -9,6 +9,7 @@ import logging
 import os
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Iterable
 from zoneinfo import ZoneInfo
@@ -16,8 +17,14 @@ from zoneinfo import ZoneInfo
 from access import PasswordAccess
 from cache import EventCache
 from dotenv import load_dotenv
-from email_reminders import EmailReminderSender, SMTPSettings
+from email_reminders import EmailReminderSender, PartialEmailDeliveryError, SMTPSettings
 from events import Event
+from seminar_reminders import (
+    SEMINAR_RECIPIENTS,
+    SEMINAR_TEST_RECIPIENTS,
+    compose_seminar_email,
+    current_week_events,
+)
 from site_publisher import SitePublisher, public_snapshot
 from lunch import LessingsLunchSource, LunchCache, LunchMenu
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -37,6 +44,12 @@ LOG = logging.getLogger(__name__)
 load_dotenv()
 ADD_DATE, ADD_TITLE, ADD_SPEAKER, ADD_ABSTRACT, ADD_TIME, ADD_LOCATION = range(6)
 ADD_PASSWORD, DELETE_PASSWORD = range(6, 8)
+SEMINAR_WED_PASSWORD, SEMINAR_THUR_PASSWORD, SEMINAR_TEST_PASSWORD = range(8, 11)
+SEMINAR_PASSWORD_STATES = {
+    "seminarreminderwed": SEMINAR_WED_PASSWORD,
+    "seminarreminderthur": SEMINAR_THUR_PASSWORD,
+    "seminarremindertest": SEMINAR_TEST_PASSWORD,
+}
 
 
 @dataclass(frozen=True)
@@ -406,6 +419,54 @@ def build_application(settings: Settings) -> Application:
             await delete_added_event(update, context, nonce)
         return ConversationHandler.END
 
+    async def seminar_reminder_start(update: Update, context: ContextTypes.DEFAULT_TYPE, *, command: str) -> int:
+        return await password_prompt(update, context, SEMINAR_PASSWORD_STATES[command])
+
+    async def seminar_reminder_password(update: Update, context: ContextTypes.DEFAULT_TYPE, *, command: str) -> int:
+        if await accept_password(update, context, command) is None:
+            return ConversationHandler.END
+        # Each password entry authorizes this one request, even if delivery fails.
+        password_access.revoke(update.effective_user.id, update.effective_chat.id)
+        if not email_sender.settings.configured:
+            await update.effective_message.reply_text("Email is not configured. Set SMTP_HOST and SMTP_FROM before sending reminders.")
+            return ConversationHandler.END
+        try:
+            events = await asyncio.to_thread(cache.load)
+        except Exception:
+            LOG.exception("Could not read seminar email schedule")
+            await update.effective_message.reply_text("The seminar schedule could not be read. No emails were sent.")
+            return ConversationHandler.END
+        # These commands always refer to the current week in New York.
+        today_date = datetime.now(ZoneInfo("America/New_York")).date()
+        test = command == "seminarremindertest"
+        recipients = SEMINAR_TEST_RECIPIENTS if test else SEMINAR_RECIPIENTS
+        series_options = (
+            ("seminarreminderwed", "Wednesday Seminar", 2, "wednesday-seminar", settings.wednesday_spreadsheet_ids),
+            ("seminarreminderthur", "Journal Club", 3, "journal-club", settings.journal_club_spreadsheet_ids),
+        )
+        results = []
+        for series_command, series, weekday, source_name, sheet_ids in series_options:
+            if not test and command != series_command:
+                continue
+            talks = current_week_events(events, today_date, weekday, (source_name, *(f"google:{sheet_id}" for sheet_id in sheet_ids)))
+            if not talks:
+                results.append(f"{series}: no events in the cached schedule for this week; no email sent.")
+                continue
+            email = compose_seminar_email(talks, series, test=test)
+            try:
+                await asyncio.to_thread(email_sender.send, recipients, email.subject, email.body)
+            except PartialEmailDeliveryError as exc:
+                LOG.warning("Partial %s email delivery: %s", series, exc)
+                results.append(f"{series}: accepted for {exc.accepted_count} recipients; {exc.refused_count} refused. Check delivery before retrying to avoid duplicates.")
+            except Exception:
+                LOG.exception("Could not send %s email", series)
+                results.append(f"{series}: email delivery could not be confirmed. Check the mail server before retrying.")
+            else:
+                label = "test email" if test else "email"
+                results.append(f"{series} ({talks[0].date:%B %d, %Y}): {label} sent to {len(recipients)} recipients.")
+        await update.effective_message.reply_text("\n".join(results), reply_markup=menu_markup())
+        return ConversationHandler.END
+
     async def add_event_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         try:
             event_date = parse_event_date(update.effective_message.text or "", datetime.now(timezone).date())
@@ -476,7 +537,7 @@ def build_application(settings: Settings) -> Application:
     async def cancel_add_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         password_access.revoke(update.effective_user.id, update.effective_chat.id)
         context.user_data.pop("new_event", None)
-        await update.effective_message.reply_text("Event entry cancelled.", reply_markup=menu_markup())
+        await update.effective_message.reply_text("Operation cancelled.", reply_markup=menu_markup())
         return ConversationHandler.END
 
     async def delete_added_event(update: Update, context: ContextTypes.DEFAULT_TYPE, nonce: str) -> None:
@@ -677,7 +738,11 @@ def build_application(settings: Settings) -> Application:
 
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(
-            "Choose a button below, or use /today, /week, /nextweek, /lunch, /trains, /add, or /delete. /trains shows LIRR departures in the next 3 hours. NYC means Penn Station. /add and /delete require the password in a private chat. /start subscribes to Monday announcements; /stop unsubscribes; /cancel stops event entry.",
+            "Choose a button below, or use /today, /week, /nextweek, /lunch, /trains, /add, or /delete. /trains shows LIRR departures in the next 3 hours. NYC means Penn Station. /add and /delete require the password in a private chat. /start subscribes to Monday announcements; /stop unsubscribes; /cancel stops the current operation.\n\n"
+            "Email reminders (password required in a private chat):\n"
+            "/seminarreminderwed — email this week's Wednesday Seminar to the mailing list.\n"
+            "/seminarreminderthur — email this week's Thursday Journal Club to the mailing list.\n"
+            "/seminarremindertest — email both previews only to Fedor Popov, Alexander Frenkel, and Alessio Miscioscia.",
             reply_markup=menu_markup(),
         )
 
@@ -690,11 +755,18 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("lunch", lunch))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(ConversationHandler(
-        entry_points=[CommandHandler("add", add_event_start), CommandHandler("delete", delete_event_start)],
+        entry_points=[
+            CommandHandler("add", add_event_start), CommandHandler("delete", delete_event_start),
+            *(CommandHandler(command, partial(seminar_reminder_start, command=command)) for command in SEMINAR_PASSWORD_STATES),
+        ],
         allow_reentry=True,
         states={
             ADD_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_password)],
             DELETE_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, delete_password)],
+            **{
+                state: [MessageHandler(filters.TEXT & ~filters.COMMAND, partial(seminar_reminder_password, command=command))]
+                for command, state in SEMINAR_PASSWORD_STATES.items()
+            },
             ADD_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_event_date)],
             ADD_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_event_title)],
             ADD_SPEAKER: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_event_speaker)],

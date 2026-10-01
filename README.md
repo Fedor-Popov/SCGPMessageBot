@@ -65,6 +65,20 @@ Set `EMAIL_REMINDERS_ENABLED=true` and configure an SMTP account in `.env` to se
 
 For a Gmail sender, use `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_USE_TLS=true`, the sender address as `SMTP_FROM`/`SMTP_USERNAME`, and a Google App Password as `SMTP_PASSWORD`. Do not commit `.env` or share the SMTP password.
 
+### Seminar announcement commands
+
+In a private chat, send one of these commands, then enter the same password used for `/add` and `/delete` when prompted:
+
+- `/seminarreminderwed` sends this week's Wednesday Seminar email to the 36-address seminar mailing list.
+- `/seminarreminderthur` sends this week's Thursday Journal Club email to the same list.
+- `/seminarremindertest` sends both announcement previews as separate `[TEST]` emails only to `fpopov@scgp.stonybrook.edu`, `frenkelalexander1@gmail.com`, and `alessio.miscioscia@stonybrook.edu`.
+
+The commands select Wednesday or Thursday events from the matching series in the cached schedule, using the current Monday–Sunday week in `America/New_York`, including when that day's event has already passed. They never advance to next week's events. Each email includes the available date, time, location, speaker, affiliation, title, abstract, and event link. If a series has no matching event this week, the bot reports that and sends no email for that series. `/seminarremindertest` still sends the other series if it is available. The usual hourly schedule refresh keeps the cache up to date.
+
+SMTP must be configured for these commands. `EMAIL_REMINDERS_ENABLED` controls only the automatic startup/Monday operational emails; manual seminar commands work independently. The seminar mailing list and the separate three-person test list are in `seminar_reminders.py`; `REMINDER_EMAIL_RECIPIENTS` and `EMAIL_TEST_RECIPIENT` continue to control only the operational reminders. Recipients appear in the email's `To` header.
+
+Every command requires a fresh password entry, with the same password-message deletion attempt and incorrect-password cooldown as `/add` and `/delete`. `/cancel` ends the operation before sending. The bot reports success or failure for each email and distinguishes partial recipient refusals. It never automatically retries a failed email; check delivery before manually retrying to avoid duplicates. These commands send immediately after a valid password; they do not schedule future emails.
+
 For a terminal-only server, the simplest authentication is Google Application Default Credentials. Run this once as the Google account that can read the sheets:
 
 ```bash

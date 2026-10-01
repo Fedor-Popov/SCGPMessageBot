@@ -77,7 +77,7 @@ def test_protected_commands_and_delete_callback(tmp_path, password, monkeypatch)
     app = build_application(settings)
     conversation = next(h for h in app.handlers[0] if isinstance(h, ConversationHandler))
     commands = {next(iter(h.commands)): h.callback for h in conversation.entry_points}
-    assert set(commands) == {"add", "delete"}
+    assert set(commands) == {"add", "delete", "seminarreminderwed", "seminarreminderthur", "seminarremindertest"}
     delete_callback = next(h.callback for h in app.handlers[0]
                            if isinstance(h, CallbackQueryHandler) and h.pattern)
     message = SimpleNamespace(text="", reply_text=AsyncMock(), delete=AsyncMock())
