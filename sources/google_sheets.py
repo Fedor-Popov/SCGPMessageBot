@@ -8,15 +8,12 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-import google.auth
-from google.auth.transport.requests import Request
-from google.auth.exceptions import DefaultCredentialsError
-from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
 from events import Event
+from google_credentials import SHEETS_SCOPES, load_google_credentials
 
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+SCOPES = SHEETS_SCOPES
 ALIASES = {
     "date": {"date", "dates", "day", "when", "date of wednesday seminar", "date of seminar"},
     "title": {"title", "talk", "talk title", "name of talk"},
@@ -130,22 +127,7 @@ class GoogleSheetsSource:
             self.name = source_name
 
     def _service(self):
-        if self.token_file and self.token_file.exists():
-            credentials = Credentials.from_authorized_user_file(self.token_file, SCOPES)
-            if credentials.expired and credentials.refresh_token:
-                credentials.refresh(Request())
-                self.token_file.write_text(credentials.to_json())
-                self.token_file.chmod(0o600)
-            if not credentials.valid:
-                raise RuntimeError("Google token is invalid or expired; rerun authorize_google.py locally")
-        else:
-            try:
-                credentials, _ = google.auth.default(scopes=SCOPES)
-            except DefaultCredentialsError as exc:
-                raise RuntimeError(
-                    "Google credentials not found. Run `gcloud auth application-default login` "
-                    "or provide GOOGLE_OAUTH_TOKEN_FILE."
-                ) from exc
+        credentials = load_google_credentials(self.token_file, SCOPES)
         return build("sheets", "v4", credentials=credentials, cache_discovery=False)
 
     def fetch(self) -> list[Event]:

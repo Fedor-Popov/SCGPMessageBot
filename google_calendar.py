@@ -8,15 +8,11 @@ import logging
 from pathlib import Path
 from urllib.parse import quote
 
-import google.auth
-from google.auth.exceptions import DefaultCredentialsError
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
 from events import Event
+from google_credentials import CALENDAR_SCOPES, load_google_credentials
 
-CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar"]
 DEFAULT_CALENDAR_NAME = "SCGP Seminars"
 LOG = logging.getLogger(__name__)
 
@@ -91,24 +87,7 @@ class GoogleCalendarPublisher:
         self.timezone = timezone
 
     def _credentials(self):
-        if self.token_file and self.token_file.exists():
-            credentials = Credentials.from_authorized_user_file(self.token_file, CALENDAR_SCOPES)
-            if not credentials.has_scopes(CALENDAR_SCOPES):
-                raise RuntimeError("Google OAuth token lacks Calendar access; rerun authorize_google.py")
-            if credentials.expired and credentials.refresh_token:
-                credentials.refresh(Request())
-                self.token_file.write_text(credentials.to_json())
-                self.token_file.chmod(0o600)
-            if not credentials.valid:
-                raise RuntimeError("Google Calendar token is invalid or expired; rerun authorize_google.py")
-            return credentials
-        try:
-            credentials, _ = google.auth.default(scopes=CALENDAR_SCOPES)
-            return credentials
-        except DefaultCredentialsError as exc:
-            raise RuntimeError(
-                "Google credentials not found. Run authorize_google.py with Calendar access."
-            ) from exc
+        return load_google_credentials(self.token_file, CALENDAR_SCOPES)
 
     def _service(self):
         return build("calendar", "v3", credentials=self._credentials(), cache_discovery=False)

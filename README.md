@@ -107,6 +107,8 @@ GOOGLE_CALENDAR_STATE_FILE=google-calendar.json
 
 On the next bot refresh, it creates (or reuses) a public calendar named `SCGP Seminars`, replaces only events previously created by this bot, and publishes its Google Calendar link to the website. `GOOGLE_CALENDAR_ID` is optional; the bot stores the generated ID in the state file. The Google Calendar API must be enabled in the Google Cloud project used by the OAuth client.
 
+Sheets and Calendar share `google-token.json`. Their credential loader preserves all saved permissions when refreshing, so refreshing Sheets cannot remove Calendar access (or vice versa). Older versions could save a Sheets-only token and then reuse it for Calendar, producing a recurring `403 insufficient authentication scopes` error. The loader now refreshes a narrowed token before using it for the other API and saves it atomically. If the original Google authorization included both permissions, this repairs the token automatically. If Google refuses the missing permission, rerun `authorize_google.py` on the computer with a browser, approve both Sheets and Calendar, securely replace the server's token file, and restart the bot. Restarting alone cannot grant permissions that were never approved.
+
 ## Public seminar website
 
 The public schedule is hosted at https://scgp-seminars.github.io in the separate
