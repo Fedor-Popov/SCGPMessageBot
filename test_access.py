@@ -13,7 +13,7 @@ from sources.manual import ManualEventSource
 from sources.thermal import ThermalSeminarsSource
 from sources.journal_club import JournalClubSource
 from sources.google_sheets import parse_rows
-from telegram.ext import CallbackQueryHandler, ConversationHandler
+from telegram.ext import CallbackQueryHandler, CommandHandler, ConversationHandler
 from website import WebsiteTalkSource
 
 
@@ -76,8 +76,8 @@ def test_protected_commands_and_delete_callback(tmp_path, password, monkeypatch)
     source.add(event)
     app = build_application(settings)
     conversation = next(h for h in app.handlers[0] if isinstance(h, ConversationHandler))
-    commands = {next(iter(h.commands)): h.callback for h in conversation.entry_points}
-    assert set(commands) == {"add", "delete", "seminarreminderwed", "seminarreminderthur", "seminarremindertest"}
+    commands = {next(iter(h.commands)): h.callback for h in conversation.entry_points if isinstance(h, CommandHandler)}
+    assert set(commands) == {"add", "delete", "subscribe", "seminarreminderwed", "seminarreminderthur", "seminarremindertest"}
     delete_callback = next(h.callback for h in app.handlers[0]
                            if isinstance(h, CallbackQueryHandler) and h.pattern)
     message = SimpleNamespace(text="", reply_text=AsyncMock(), delete=AsyncMock())

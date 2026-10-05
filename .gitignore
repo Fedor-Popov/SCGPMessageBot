@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 subscribers.json
+email-subscribers.json
+.email-subscribers.json.*
 talks-cache.json
 lunch-cache.json
 lirr-schedule.zip

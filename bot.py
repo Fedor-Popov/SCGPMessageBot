@@ -18,11 +18,13 @@ from access import PasswordAccess
 from cache import EventCache
 from dotenv import load_dotenv
 from email_reminders import EmailReminderSender, PartialEmailDeliveryError, SMTPSettings
+from email_subscribers import EmailSubscriberStore, merge_recipients, normalize_email
 from events import Event
 from seminar_reminders import (
     SEMINAR_RECIPIENTS,
     SEMINAR_TEST_RECIPIENTS,
     compose_seminar_email,
+    compose_subscriber_report,
     current_week_events,
 )
 from site_publisher import SitePublisher, public_snapshot
@@ -45,6 +47,7 @@ load_dotenv()
 ADD_DATE, ADD_TITLE, ADD_SPEAKER, ADD_ABSTRACT, ADD_TIME, ADD_LOCATION = range(6)
 ADD_PASSWORD, DELETE_PASSWORD = range(6, 8)
 SEMINAR_WED_PASSWORD, SEMINAR_THUR_PASSWORD, SEMINAR_TEST_PASSWORD = range(8, 11)
+SUBSCRIBE_EMAIL = 11
 SEMINAR_PASSWORD_STATES = {
     "seminarreminderwed": SEMINAR_WED_PASSWORD,
     "seminarreminderthur": SEMINAR_THUR_PASSWORD,
@@ -92,6 +95,7 @@ class Settings:
         "alessio.miscioscia@stonybrook.edu",
     )
     email_test_recipient: str = "fpopov@scgp.stonybrook.edu"
+    email_subscribers_file: Path = Path("email-subscribers.json")
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -147,6 +151,7 @@ class Settings:
             reminder_email_hour=int(os.getenv("REMINDER_EMAIL_HOUR", "18")),
             reminder_email_recipients=reminder_recipients,
             email_test_recipient=os.getenv("EMAIL_TEST_RECIPIENT", "fpopov@scgp.stonybrook.edu").strip(),
+            email_subscribers_file=Path(os.getenv("EMAIL_SUBSCRIBERS_FILE", "email-subscribers.json")),
         )
 
 
@@ -255,7 +260,7 @@ def menu_markup() -> InlineKeyboardMarkup:
             InlineKeyboardButton("Lunch", callback_data="lunch"),
         ],
         [
-            InlineKeyboardButton("Trains", callback_data="trains"),
+            InlineKeyboardButton("Subscribe", callback_data="subscribe"),
             InlineKeyboardButton("Help", callback_data="help"),
         ],
         [InlineKeyboardButton("Stop announcements", callback_data="stop")],
@@ -329,6 +334,7 @@ def build_application(settings: Settings) -> Application:
         for sheet_id in ids
     }
     subscribers = SubscriberStore(settings.subscribers_file)
+    email_subscribers = EmailSubscriberStore(settings.email_subscribers_file)
     timezone = ZoneInfo(settings.timezone)
     email_sender = EmailReminderSender(SMTPSettings(
         host=settings.smtp_host,
@@ -350,7 +356,38 @@ def build_application(settings: Settings) -> Application:
     async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_chat:
             await subscribers.remove(update.effective_chat.id)
-            await update.effective_message.reply_text("Unsubscribed from weekly announcements.", reply_markup=menu_markup())
+            await update.effective_message.reply_text("Unsubscribed from Monday Telegram announcements. Email subscriptions are unchanged.", reply_markup=menu_markup())
+
+    async def subscribe_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        if update.callback_query:
+            await update.callback_query.answer()
+        password_access.revoke(update.effective_user.id, update.effective_chat.id)
+        context.user_data.pop("new_event", None)
+        if update.effective_chat.type != "private":
+            await update.effective_message.reply_text("To subscribe, open a private chat with the bot and use /subscribe.")
+            return ConversationHandler.END
+        await update.effective_message.reply_text(
+            "Enter your email address to receive Wednesday Seminar and Thursday Journal Club announcements. "
+            "Send /cancel to stop."
+        )
+        return SUBSCRIBE_EMAIL
+
+    async def subscribe_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        try:
+            address = normalize_email(update.effective_message.text or "")
+        except ValueError as exc:
+            await update.effective_message.reply_text(f"{exc} Or use /cancel to stop.")
+            return SUBSCRIBE_EMAIL
+        try:
+            added = False if address in SEMINAR_RECIPIENTS else await asyncio.to_thread(email_subscribers.add, address)
+        except Exception:
+            LOG.exception("Could not save email subscription")
+            await update.effective_message.reply_text("Your subscription could not be saved. Please try /subscribe again later.")
+            return ConversationHandler.END
+        message = (f"Subscribed {address} to seminar and journal club emails."
+                   if added else f"{address} is already on the seminar email list.")
+        await update.effective_message.reply_text(message, reply_markup=menu_markup())
+        return ConversationHandler.END
 
     async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         now = datetime.now(timezone).date()
@@ -431,39 +468,51 @@ def build_application(settings: Settings) -> Application:
             await update.effective_message.reply_text("Email is not configured. Set SMTP_HOST and SMTP_FROM before sending reminders.")
             return ConversationHandler.END
         try:
-            events = await asyncio.to_thread(cache.load)
+            extra_recipients = await asyncio.to_thread(email_subscribers.all)
+            announcement_recipients = merge_recipients(SEMINAR_RECIPIENTS, extra_recipients)
         except Exception:
-            LOG.exception("Could not read seminar email schedule")
-            await update.effective_message.reply_text("The seminar schedule could not be read. No emails were sent.")
+            LOG.exception("Could not read seminar email subscribers")
+            await update.effective_message.reply_text("The email subscriber list could not be read. No emails were sent.")
             return ConversationHandler.END
         # These commands always refer to the current week in New York.
         today_date = datetime.now(ZoneInfo("America/New_York")).date()
         test = command == "seminarremindertest"
-        recipients = SEMINAR_TEST_RECIPIENTS if test else SEMINAR_RECIPIENTS
+        recipients = SEMINAR_TEST_RECIPIENTS if test else announcement_recipients
         series_options = (
             ("seminarreminderwed", "Wednesday Seminar", 2, "wednesday-seminar", settings.wednesday_spreadsheet_ids),
             ("seminarreminderthur", "Journal Club", 3, "journal-club", settings.journal_club_spreadsheet_ids),
         )
         results = []
+        deliveries = []
+        if test:
+            deliveries.append(("Subscriber list", compose_subscriber_report(announcement_recipients, extra_recipients)))
+        try:
+            events = await asyncio.to_thread(cache.load)
+        except Exception:
+            LOG.exception("Could not read seminar email schedule")
+            results.append("The seminar schedule could not be read. No seminar previews or announcements were sent.")
+            events = None
         for series_command, series, weekday, source_name, sheet_ids in series_options:
-            if not test and command != series_command:
+            if events is None or (not test and command != series_command):
                 continue
             talks = current_week_events(events, today_date, weekday, (source_name, *(f"google:{sheet_id}" for sheet_id in sheet_ids)))
             if not talks:
                 results.append(f"{series}: no events in the cached schedule for this week; no email sent.")
                 continue
             email = compose_seminar_email(talks, series, test=test)
+            deliveries.append((f"{series} ({talks[0].date:%B %d, %Y})", email))
+        for label, email in deliveries:
             try:
                 await asyncio.to_thread(email_sender.send, recipients, email.subject, email.body)
             except PartialEmailDeliveryError as exc:
-                LOG.warning("Partial %s email delivery: %s", series, exc)
-                results.append(f"{series}: accepted for {exc.accepted_count} recipients; {exc.refused_count} refused. Check delivery before retrying to avoid duplicates.")
+                LOG.warning("Partial %s email delivery: %s", label, exc)
+                results.append(f"{label}: accepted for {exc.accepted_count} recipients; {exc.refused_count} refused. Check delivery before retrying to avoid duplicates.")
             except Exception:
-                LOG.exception("Could not send %s email", series)
-                results.append(f"{series}: email delivery could not be confirmed. Check the mail server before retrying.")
+                LOG.exception("Could not send %s email", label)
+                results.append(f"{label}: email delivery could not be confirmed. Check the mail server before retrying.")
             else:
-                label = "test email" if test else "email"
-                results.append(f"{series} ({talks[0].date:%B %d, %Y}): {label} sent to {len(recipients)} recipients.")
+                kind = "test email" if test else "email"
+                results.append(f"{label}: {kind} sent to {len(recipients)} recipients.")
         await update.effective_message.reply_text("\n".join(results), reply_markup=menu_markup())
         return ConversationHandler.END
 
@@ -738,29 +787,41 @@ def build_application(settings: Settings) -> Application:
 
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(
-            "Choose a button below, or use /today, /week, /nextweek, /lunch, /trains, /add, or /delete. /trains shows LIRR departures in the next 3 hours. NYC means Penn Station. /add and /delete require the password in a private chat. /start subscribes to Monday announcements; /stop unsubscribes; /cancel stops the current operation.\n\n"
+            "Choose a button below, or use /today, /week, /nextweek, /lunch, /subscribe, /trains, /add, or /delete. "
+            "Subscribe (or /subscribe) asks for your email to receive seminar and journal club announcements. "
+            "/trains shows LIRR departures in the next 3 hours. NYC means Penn Station. /add and /delete require the password in a private chat. "
+            "/start subscribes to Monday Telegram announcements; /stop stops those Telegram announcements; /cancel stops the current operation.\n\n"
             "Email reminders (password required in a private chat):\n"
             "/seminarreminderwed — email this week's Wednesday Seminar to the mailing list.\n"
             "/seminarreminderthur — email this week's Thursday Journal Club to the mailing list.\n"
-            "/seminarremindertest — email both previews only to Fedor Popov, Alexander Frenkel, and Alessio Miscioscia.",
+            "/seminarremindertest — email both previews and the subscriber list only to Fedor Popov, Alexander Frenkel, and Alessio Miscioscia.",
             reply_markup=menu_markup(),
         )
 
     application = Application.builder().token(settings.telegram_token).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("stop", stop))
-    application.add_handler(CommandHandler("today", today))
-    application.add_handler(CommandHandler("week", week))
-    application.add_handler(CommandHandler("nextweek", nextweek))
-    application.add_handler(CommandHandler("lunch", lunch))
-    application.add_handler(CommandHandler("help", help_command))
+    navigation_commands = {"start": start, "stop": stop, "today": today, "week": week,
+                           "nextweek": nextweek, "lunch": lunch, "help": help_command}
+
+    async def leave_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE, *, handler) -> int:
+        await handler(update, context)
+        return ConversationHandler.END
+
     application.add_handler(ConversationHandler(
         entry_points=[
             CommandHandler("add", add_event_start), CommandHandler("delete", delete_event_start),
+            CommandHandler("subscribe", subscribe_start),
+            CallbackQueryHandler(subscribe_start, pattern=r"^subscribe$"),
             *(CommandHandler(command, partial(seminar_reminder_start, command=command)) for command in SEMINAR_PASSWORD_STATES),
         ],
         allow_reentry=True,
         states={
+            SUBSCRIBE_EMAIL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, subscribe_email),
+                *(CommandHandler(command, partial(leave_subscription, handler=handler))
+                  for command, handler in navigation_commands.items()),
+                CallbackQueryHandler(partial(leave_subscription, handler=button_callback),
+                                     pattern=r"^(today|week|nextweek|lunch|help|stop)$"),
+            ],
             ADD_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_password)],
             DELETE_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, delete_password)],
             **{
@@ -776,6 +837,8 @@ def build_application(settings: Settings) -> Application:
         },
         fallbacks=[CommandHandler("cancel", cancel_add_event)],
     ))
+    for command, handler in navigation_commands.items():
+        application.add_handler(CommandHandler(command, handler))
     application.add_handler(CommandHandler("cancel", cancel_add_event))
     application.add_handler(CallbackQueryHandler(delete_added_event_callback, pattern=r"^delete:"))
     from trains import TrainSchedules

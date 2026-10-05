@@ -144,7 +144,8 @@ def test_selector_flow_and_result_pagination(tables):
     assert len(text) < 4096
     assert {b.text for row in station_buttons().inline_keyboard for b in row} == set(STATIONS.values()) | {"Main menu"}
     assert {b.text for row in station_buttons("nyc").inline_keyboard for b in row} == set(STATIONS.values()) | {"Main menu"}
-    assert any(b.text == "Trains" for row in menu_markup().inline_keyboard for b in row)
+    assert any(b.text == "Subscribe" for row in menu_markup().inline_keyboard for b in row)
+    assert all(b.text != "Trains" for row in menu_markup().inline_keyboard for b in row)
     app = MagicMock()
     schedules = SimpleNamespace(search=MagicMock(return_value=result))
     register_trains(app, schedules, menu_markup)

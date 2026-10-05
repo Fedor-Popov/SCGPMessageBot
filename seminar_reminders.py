@@ -62,6 +62,22 @@ class SeminarEmail:
     body: str
 
 
+def compose_subscriber_report(recipients: tuple[str, ...], subscribers: tuple[str, ...]) -> SeminarEmail:
+    lines = [
+        "SCGP seminar email subscribers",
+        "",
+        "This report is sent only to Fedor Popov, Alexander Frenkel, and Alessio Miscioscia.",
+        "",
+        f"Full announcement recipient list ({len(recipients)} unique addresses):",
+        *recipients,
+        "",
+        f"Addresses added through Subscribe ({len(subscribers)}):",
+        *(subscribers or ("No additional subscribers yet.",)),
+        "",
+    ]
+    return SeminarEmail("[TEST] SCGP seminar subscriber list", "\n".join(lines))
+
+
 def current_week_events(
     events: Iterable[Event], today: date, weekday: int, source_names: Iterable[str],
 ) -> list[Event]:

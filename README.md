@@ -30,7 +30,7 @@ Current modules:
 
 ## LIRR trains
 
-Select **Trains** (or `/trains`), choose **From**, then **To**: Ronkonkoma, Stony Brook, NYC (Penn Station), or Jamaica. Results show departures in the next three hours in New York time, with train numbers, arrival times and any changes. NYC means Penn Station; Grand Central is not included. The same station cannot be selected as both endpoints.
+Use `/trains`, choose **From**, then **To**: Ronkonkoma, Stony Brook, NYC (Penn Station), or Jamaica. Results show departures in the next three hours in New York time, with train numbers, arrival times and any changes. NYC means Penn Station; Grand Central is not included. The same station cannot be selected as both endpoints. The main menu's former Trains button is now Subscribe.
 
 Every train screen has a **Main menu** button, including the station selectors, loading screen and results. Returning to the main menu dismisses pending lookup results so they cannot replace the menu when they arrive.
 
@@ -67,15 +67,19 @@ For a Gmail sender, use `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_USE_T
 
 ### Seminar announcement commands
 
+Choose **Subscribe** in the main menu (or send `/subscribe`) in a private chat. The bot asks for one email address, validates it, and adds it to future Wednesday Seminar and Thursday Journal Club announcements. No password is needed to subscribe. Existing addresses are not duplicated, including addresses already in the original mailing list; matching ignores capitalization. `/cancel` stops email entry. Subscribing does not send an email immediately.
+
+Additional email addresses are saved in `email-subscribers.json` (override with `EMAIL_SUBSCRIBERS_FILE`). This private server file is excluded from Git and saved atomically with owner-only permissions. Keep it across bot updates and restarts, and back it up with other bot data. Do not commit it or publish it to the website. `subscribers.json` remains the separate Telegram announcement list: `/start` and `/stop` affect only those Telegram announcements, not seminar emails.
+
 In a private chat, send one of these commands, then enter the same password used for `/add` and `/delete` when prompted:
 
-- `/seminarreminderwed` sends this week's Wednesday Seminar email to the 37-address seminar mailing list, including Fedor Popov at `fpopov@scgp.stonybrook.edu`.
+- `/seminarreminderwed` sends this week's Wednesday Seminar email to the original 37-address seminar mailing list plus all addresses added through Subscribe, deduplicated. This includes Fedor Popov at `fpopov@scgp.stonybrook.edu`.
 - `/seminarreminderthur` sends this week's Thursday Journal Club email to the same list.
-- `/seminarremindertest` sends both announcement previews as separate `[TEST]` emails only to `fpopov@scgp.stonybrook.edu`, `frenkelalexander1@gmail.com`, and `alessio.miscioscia@stonybrook.edu`.
+- `/seminarremindertest` sends both announcement previews as separate `[TEST]` emails only to `fpopov@scgp.stonybrook.edu`, `frenkelalexander1@gmail.com`, and `alessio.miscioscia@stonybrook.edu`. Those same three people also receive a separate subscriber report with the full deduplicated recipient list and the addresses added through Subscribe. The report is sent even if the current week has no events or the schedule cannot be read. The report is not included in normal announcements or shown in Telegram.
 
 The commands select Wednesday or Thursday events from the matching series in the cached schedule, using the current Monday–Sunday week in `America/New_York`, including when that day's event has already passed. They never advance to next week's events. Each email includes the available date, time, location, speaker, affiliation, title, abstract, and event link. If a series has no matching event this week, the bot reports that and sends no email for that series. `/seminarremindertest` still sends the other series if it is available. The usual hourly schedule refresh keeps the cache up to date.
 
-SMTP must be configured for these commands. `EMAIL_REMINDERS_ENABLED` controls only the automatic startup/Monday operational emails; manual seminar commands work independently. The seminar mailing list and the separate three-person test list are in `seminar_reminders.py`; `REMINDER_EMAIL_RECIPIENTS` and `EMAIL_TEST_RECIPIENT` continue to control only the operational reminders. Recipients appear in the email's `To` header.
+SMTP must be configured for these commands. `EMAIL_REMINDERS_ENABLED` controls only the automatic startup/Monday operational emails; manual seminar commands work independently. The original seminar mailing list and the separate three-person test list are in `seminar_reminders.py`; extra subscribers are loaded from the server file on each command. `REMINDER_EMAIL_RECIPIENTS` and `EMAIL_TEST_RECIPIENT` continue to control only the operational reminders. Recipients appear in the email's `To` header.
 
 Every command requires a fresh password entry, with the same password-message deletion attempt and incorrect-password cooldown as `/add` and `/delete`. `/cancel` ends the operation before sending. The bot reports success or failure for each email and distinguishes partial recipient refusals. It never automatically retries a failed email; check delivery before manually retrying to avoid duplicates. These commands send immediately after a valid password; they do not schedule future emails.
 

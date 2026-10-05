@@ -5,7 +5,7 @@ from datetime import date, datetime, timezone
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from telegram import Chat, Message, MessageEntity, Update, User
+from telegram import CallbackQuery, Chat, Message, MessageEntity, Update, User
 from telegram.ext import ExtBot
 
 import access
@@ -111,6 +111,7 @@ def harness(tmp_path, monkeypatch):
         thermal_spreadsheet_ids=(), additional_spreadsheet_ids=(), cache_export_spreadsheet_id="",
         google_token_file=tmp_path / "token.json", timezone="UTC", refresh_hour=3,
         refresh_interval_hours=1, announcement_hour=10, subscribers_file=tmp_path / "subscribers.json",
+        email_subscribers_file=tmp_path / "email-subscribers.json",
         smtp_host="smtp.example.test", smtp_from="organizers@example.test",
         # These operational settings must never redirect the seminar test command.
         email_test_recipient="unrelated@example.test", reminder_email_recipients=("unrelated@example.test",),
@@ -129,6 +130,7 @@ def harness(tmp_path, monkeypatch):
     monkeypatch.setattr(EmailReminderSender, "send", send)
     monkeypatch.setattr(ExtBot, "send_message", replies)
     monkeypatch.setattr(ExtBot, "delete_message", deletes)
+    monkeypatch.setattr(ExtBot, "answer_callback_query", AsyncMock())
 
     class Harness:
         def __init__(self):
@@ -159,6 +161,17 @@ def harness(tmp_path, monkeypatch):
             update.set_bot(self.app.bot)
             await self.app.process_update(update)
 
+        async def click(self, data, *, user=1, chat=1, chat_type="private"):
+            self.counter += 1
+            message = Message(self.counter, datetime.now(timezone.utc), Chat(chat, chat_type),
+                              from_user=self.app.bot.bot, text="Choose an option")
+            message.set_bot(self.app.bot)
+            query = CallbackQuery(str(self.counter), User(user, "User", False), "test", message=message, data=data)
+            query.set_bot(self.app.bot)
+            update = Update(self.counter, callback_query=query)
+            update.set_bot(self.app.bot)
+            await self.app.process_update(update)
+
         @property
         def last_reply(self):
             return self.replies.call_args.kwargs["text"]
@@ -177,9 +190,13 @@ def test_commands_authenticate_and_send_only_correct_events_and_recipients(harne
         harness.send.assert_not_called()
         assert "Enter the password" in harness.last_reply
         await harness.dispatch(harness.password)
-        assert harness.send.call_count == len(expected_titles)
+        is_test = command.endswith("test")
+        assert harness.send.call_count == len(expected_titles) + int(is_test)
         recipients = SEMINAR_TEST_RECIPIENTS if command.endswith("test") else SEMINAR_RECIPIENTS
-        for call, title in zip(harness.send.call_args_list, expected_titles):
+        if is_test:
+            assert harness.send.call_args_list[0].args[0] == SEMINAR_TEST_RECIPIENTS
+            assert "subscriber list" in harness.send.call_args_list[0].args[1]
+        for call, title in zip(harness.send.call_args_list[int(is_test):], expected_titles):
             actual_recipients, subject, body = call.args
             assert actual_recipients == recipients
             assert title in body
@@ -237,7 +254,7 @@ def test_test_command_sends_available_series_and_reports_missing_one(harness):
     async def exercise():
         await harness.dispatch("/seminarremindertest")
         await harness.dispatch(harness.password)
-        harness.send.assert_called_once()
+        assert harness.send.call_count == 2
         assert harness.send.call_args.args[0] == SEMINAR_TEST_RECIPIENTS
         assert "Thursday title" in harness.send.call_args.args[2]
         assert "Wednesday Seminar: no events" in harness.last_reply
@@ -247,7 +264,7 @@ def test_test_command_sends_available_series_and_reports_missing_one(harness):
 
 
 @pytest.mark.parametrize("failure", ["missing_smtp", "empty_week", "corrupt_cache"])
-def test_unavailable_schedule_or_smtp_never_sends(harness, failure):
+def test_unavailable_schedule_still_sends_report_but_missing_smtp_sends_nothing(harness, failure):
     if failure == "missing_smtp":
         harness.settings = replace(harness.settings, smtp_host="")
         harness.build()
@@ -259,7 +276,12 @@ def test_unavailable_schedule_or_smtp_never_sends(harness, failure):
     async def exercise():
         await harness.dispatch("/seminarremindertest")
         await harness.dispatch(harness.password)
-        harness.send.assert_not_called()
+        if failure == "missing_smtp":
+            harness.send.assert_not_called()
+        else:
+            harness.send.assert_called_once()
+            assert harness.send.call_args.args[0] == SEMINAR_TEST_RECIPIENTS
+            assert "subscriber list" in harness.send.call_args.args[1]
         expected = {"missing_smtp": "not configured", "empty_week": "no events", "corrupt_cache": "could not be read"}
         assert expected[failure] in harness.last_reply
 
@@ -271,12 +293,12 @@ def test_unavailable_schedule_or_smtp_never_sends(harness, failure):
     (PartialEmailDeliveryError(2, 1), "accepted for 2 recipients; 1 refused"),
 ])
 def test_send_failure_is_reported_per_series_without_automatic_retry(harness, error, expected):
-    harness.send.side_effect = [error, None]
+    harness.send.side_effect = [None, error, None]
 
     async def exercise():
         await harness.dispatch("/seminarremindertest")
         await harness.dispatch(harness.password)
-        assert harness.send.call_count == 2
+        assert harness.send.call_count == 3
         assert expected in harness.last_reply
         assert "Journal Club" in harness.last_reply and "sent to 3 recipients" in harness.last_reply
 
