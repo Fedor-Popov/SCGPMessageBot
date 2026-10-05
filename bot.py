@@ -787,14 +787,10 @@ def build_application(settings: Settings) -> Application:
 
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(
-            "Choose a button below, or use /today, /week, /nextweek, /lunch, /subscribe, /trains, /add, or /delete. "
+            "Choose a button below, or use /today, /week, /nextweek, /lunch, /subscribe, /trains, or /delete. "
             "Subscribe (or /subscribe) asks for your email to receive seminar and journal club announcements. "
-            "/trains shows LIRR departures in the next 3 hours. NYC means Penn Station. /add and /delete require the password in a private chat. "
-            "/start subscribes to Monday Telegram announcements; /stop stops those Telegram announcements; /cancel stops the current operation.\n\n"
-            "Email reminders (password required in a private chat):\n"
-            "/seminarreminderwed — email this week's Wednesday Seminar to the mailing list.\n"
-            "/seminarreminderthur — email this week's Thursday Journal Club to the mailing list.\n"
-            "/seminarremindertest — email both previews and the subscriber list only to Fedor Popov, Alexander Frenkel, and Alessio Miscioscia.",
+            "/trains shows LIRR departures in the next 3 hours. NYC means Penn Station. /delete requires the password in a private chat. "
+            "/start subscribes to Monday Telegram announcements; /stop stops those Telegram announcements; /cancel stops the current operation.",
             reply_markup=menu_markup(),
         )
 
