@@ -4,11 +4,13 @@ from website import WebsiteTalkSource
 
 
 class ThermalSeminarsSource(WebsiteTalkSource):
-    """Standard EventSource adapter for the Thermal Seminars website."""
+    """EventSource adapter for the online Thermal Seminars schedule."""
 
     name = "thermal"
-    default_time = "11:00 AM"
-    default_location = "102"
+    # The website supplies a Berlin time for each talk; there is no safe fixed
+    # New York default across the US/European daylight-saving transitions.
+    default_time = ""
+    default_location = "Online (Zoom)"
 
     def fetch(self):
         events = super().fetch()
