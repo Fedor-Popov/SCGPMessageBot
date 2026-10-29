@@ -133,8 +133,9 @@ def test_protected_commands_and_delete_callback(tmp_path, password, monkeypatch)
 def test_thermal_default_time_and_location(monkeypatch):
     monkeypatch.setattr(WebsiteTalkSource, "fetch", lambda self: [Event(date(2026, 9, 14), "Thermal")])
     event, = ThermalSeminarsSource("https://example.test").fetch()
-    assert event.time == "11:00 AM"
-    assert event.location == "102"
+    assert event.time == ""
+    assert event.location == "Online (Zoom)"
+    assert event.source == "thermal"
 
 
 def test_journal_club_default_location(tmp_path):

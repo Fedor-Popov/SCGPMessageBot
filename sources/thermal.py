@@ -1,5 +1,7 @@
 """Thermal Seminars event source."""
 
+from dataclasses import replace
+
 from website import WebsiteTalkSource
 
 
@@ -13,11 +15,12 @@ class ThermalSeminarsSource(WebsiteTalkSource):
     default_location = "Online (Zoom)"
 
     def fetch(self):
-        events = super().fetch()
-        return [event.__class__(
-            date=event.date, title=event.title, speaker=event.speaker,
-            affiliation=event.affiliation, time=event.time or self.default_time,
-            location=event.location or self.default_location,
-            description=event.description, link=event.link,
-            source=event.source or self.name,
-        ) for event in events]
+        return [
+            replace(
+                event,
+                time=event.time or self.default_time,
+                location=event.location or self.default_location,
+                source=event.source or self.name,
+            )
+            for event in super().fetch()
+        ]

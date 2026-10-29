@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 from bs4 import BeautifulSoup
+from bs4.element import Tag
 
 from events import Event
 
@@ -169,7 +170,7 @@ def _berlin_event_date_time(day: int, month: str, year: int, clock: str) -> tupl
     return local.date(), local.strftime("%I:%M %p").lstrip("0")
 
 
-def _embedded_links(block: BeautifulSoup) -> tuple[str, str]:
+def _embedded_links(block: Tag) -> tuple[str, str]:
     zoom = ""
     paper = ""
     for anchor in block.select("a[href]"):
@@ -182,6 +183,28 @@ def _embedded_links(block: BeautifulSoup) -> tuple[str, str]:
         elif "paper" in label:
             paper = url
     return zoom, paper
+
+
+def _webinar_event(
+    block: Tag, event_date: date, event_time: str, speaker_selector: str, title_selector: str
+) -> Event | None:
+    speaker = block.select_one(speaker_selector)
+    title = block.select_one(title_selector)
+    if not speaker or not title:
+        return None
+    affiliation = block.select_one(".affiliation")
+    zoom, paper = _embedded_links(block)
+    return Event(
+        date=event_date,
+        title=title.get_text(" ", strip=True),
+        speaker=speaker.get_text(" ", strip=True),
+        affiliation=affiliation.get_text(" ", strip=True) if affiliation else "",
+        time=event_time,
+        location="Online (Zoom)" if zoom else "Online",
+        description=f"Paper: {paper}" if paper else "",
+        link=zoom or paper,
+        source="thermal",
+    )
 
 
 def parse_embedded_schedule(html: str, today: date | None = None) -> list[Event]:
@@ -201,9 +224,7 @@ def parse_embedded_schedule(html: str, today: date | None = None) -> list[Event]
         day_node = hero.select_one(".day")
         month_node = hero.select_one(".month")
         time_node = hero.select_one(".time")
-        speaker_node = hero.select_one(".speaker")
-        title_node = hero.select_one(".title")
-        if all((day_node, month_node, time_node, speaker_node, title_node)):
+        if all((day_node, month_node, time_node)):
             month = month_node.get_text(" ", strip=True).split()[-1]
             day = int(day_node.get_text(" ", strip=True))
             clock_match = EMBEDDED_TIME.search(time_node.get_text(" ", strip=True))
@@ -211,66 +232,49 @@ def parse_embedded_schedule(html: str, today: date | None = None) -> list[Event]
                 year = today.year
                 if cards:
                     next_date = cards[0][1]
-                    year = int(next_date["year"]) - (month.lower() == "dec" and next_date["month"].lower() == "jan")
+                    year = int(next_date["year"])
+                    if month.lower() == "dec" and next_date["month"].lower() == "jan":
+                        year -= 1
                 elif date(year, datetime.strptime(month, "%b").month, day) < today:
                     year += 1
                 event_date, event_time = _berlin_event_date_time(day, month, year, clock_match["time"])
-                zoom, paper = _embedded_links(hero)
-                affiliation = hero.select_one(".affiliation")
-                events.append(Event(
-                    date=event_date,
-                    title=title_node.get_text(" ", strip=True),
-                    speaker=speaker_node.get_text(" ", strip=True),
-                    affiliation=affiliation.get_text(" ", strip=True) if affiliation else "",
-                    time=event_time,
-                    location="Online (Zoom)" if zoom else "Online",
-                    description=f"Paper: {paper}" if paper else "",
-                    link=zoom or paper,
-                    source="thermal",
-                ))
+                event = _webinar_event(hero, event_date, event_time, ".speaker", ".title")
+                if event:
+                    events.append(event)
 
     for card, match in cards:
-        speaker = card.select_one("h3")
-        title = card.select_one(".talk-title")
-        if not speaker or not title:
-            continue
         event_date, event_time = _berlin_event_date_time(
             int(match["day"]), match["month"], int(match["year"]), match["time"]
         )
-        zoom, paper = _embedded_links(card)
-        affiliation = card.select_one(".affiliation")
-        events.append(Event(
-            date=event_date,
-            title=title.get_text(" ", strip=True),
-            speaker=speaker.get_text(" ", strip=True),
-            affiliation=affiliation.get_text(" ", strip=True) if affiliation else "",
-            time=event_time,
-            location="Online (Zoom)" if zoom else "Online",
-            description=f"Paper: {paper}" if paper else "",
-            link=zoom or paper,
-            source="thermal",
-        ))
+        event = _webinar_event(card, event_date, event_time, "h3", ".talk-title")
+        if event:
+            events.append(event)
     return sorted(events, key=lambda event: (event.date, event.time, event.title.lower()))
 
 
 class WebsiteTalkSource:
     name = "thermal"
+
     def __init__(self, url: str) -> None:
         self.url = url
 
     def fetch(self) -> list[Event]:
-        response = requests.get(self.url, timeout=30, headers={"User-Agent": "SCGPMessageBot/1.0"})
-        response.raise_for_status()
+        def get_html(url: str) -> str:
+            response = requests.get(url, timeout=30, headers={"User-Agent": "SCGPMessageBot/1.0"})
+            response.raise_for_status()
+            return response.text
+
+        html = get_html(self.url)
         if urlparse(self.url).hostname == "script.google.com":
-            talks = parse_embedded_schedule(apps_script_html(response.text))
+            embed_url = self.url
         else:
-            embed_url = apps_script_url(response.text, self.url)
-            if embed_url:
-                embed = requests.get(embed_url, timeout=30, headers={"User-Agent": "SCGPMessageBot/1.0"})
-                embed.raise_for_status()
-                talks = parse_embedded_schedule(apps_script_html(embed.text))
-            else:
-                talks = parse_schedule(response.text)
+            embed_url = apps_script_url(html, self.url)
+        if embed_url:
+            if embed_url != self.url:
+                html = get_html(embed_url)
+            talks = parse_embedded_schedule(apps_script_html(html))
+        else:
+            talks = parse_schedule(html)
         if not talks:
             raise ValueError("The seminar page was fetched, but no future talks were parsed")
         return talks
